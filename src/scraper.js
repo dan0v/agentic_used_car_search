@@ -119,9 +119,13 @@ async function scrapeCarscom(params, maxResults = 20) {
                     const trimmed = line.trim();
 
                     // Title: optional condition prefix + Year Make Model
-                    // (e.g., "Used 2020 Toyota Camry XSE", "2020 Toyota Camry XSE")
-                    if (/^(?:(?:used|new|certified[\w\s-]*)\s+)?(19|20)\d{2}\s+\S+/i.test(trimmed) && !title) {
-                        title = trimmed.replace(/^(used|new|certified[\w\s-]*)\s+/i, '');
+                    // (e.g., "Used 2020 Toyota Camry XSE", "Certified 2021 Toyota
+                    // Camry SE", "2020 Toyota Camry XSE"). The prefix strip is a
+                    // bounded literal match, not a wildcard - a greedy
+                    // `certified[\w\s-]*` here previously ate past the year and
+                    // model, leaving only the trailing trim (e.g. "SE") as title.
+                    if (/^(?:(?:used|new|certified(?:\s+pre-owned)?)\s+)?(19|20)\d{2}\s+\S+/i.test(trimmed) && !title) {
+                        title = trimmed.replace(/^(?:used|new|certified(?:\s+pre-owned)?)\s+/i, '');
                         continue;
                     }
 

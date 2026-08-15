@@ -15,6 +15,7 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
 const { StdioClientTransport } = require('@modelcontextprotocol/sdk/client/stdio.js');
+const { CallToolResultSchema } = require('@modelcontextprotocol/sdk/types.js');
 
 const SERVER_PATH = path.join(__dirname, '..', 'src', 'server.js');
 
@@ -45,17 +46,30 @@ async function main() {
         }
         console.log('[PASS] input schema has all documented parameters');
 
-        // --- live search call ---
+        // --- live search call, with progress notifications ---
         console.log('[INFO] calling search_car_deals (make: Toyota, model: Camry, cars.com only) - this hits a real site, may take ~15-20s ...');
-        const result = await client.callTool({
-            name: 'search_car_deals',
-            arguments: {
-                make: 'Toyota',
-                model: 'Camry',
-                maxResults: 2,
-                sources: ['cars.com'],
+        const progressMessages = [];
+        const result = await client.callTool(
+            {
+                name: 'search_car_deals',
+                arguments: {
+                    make: 'Toyota',
+                    model: 'Camry',
+                    maxResults: 2,
+                    sources: ['cars.com'],
+                },
             },
-        });
+            CallToolResultSchema,
+            {
+                onprogress: (p) => {
+                    progressMessages.push(p.message);
+                    console.log(`  [PROGRESS] ${p.message}`);
+                },
+            },
+        );
+
+        assert.ok(progressMessages.length > 0, 'expected at least one progress notification (tool call would otherwise risk client-side timeout on slow scrapes)');
+        console.log(`[PASS] received ${progressMessages.length} progress notification(s) during the call`);
 
         assert.equal(result.isError, undefined, `tool call returned an error: ${JSON.stringify(result)}`);
         assert.equal(result.content.length, 1);

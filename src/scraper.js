@@ -58,11 +58,29 @@ async function launchBrowser() {
 }
 
 /**
+ * Emit a progress message on a fixed interval while a slow scrape runs.
+ * Scrapes take anywhere from a few seconds to ~90s (retries included), well
+ * past most MCP clients' default tool-call timeout - periodic progress
+ * notifications are what resets that timeout clock, not just start/end
+ * messages. Returns a function that stops the heartbeat.
+ */
+function startHeartbeat(sendProgress, label, intervalMs = 4000) {
+    if (!sendProgress) return () => {};
+    let elapsed = 0;
+    const id = setInterval(() => {
+        elapsed += intervalMs;
+        sendProgress(`${label} (${Math.round(elapsed / 1000)}s)...`);
+    }, intervalMs);
+    return () => clearInterval(id);
+}
+
+/**
  * Scrape Cars.com for car listings
  */
-async function scrapeCarscom(params, maxResults = 20) {
+async function scrapeCarscom(params, maxResults = 20, sendProgress = null) {
     const listings = [];
     let browser;
+    const stopHeartbeat = startHeartbeat(sendProgress, 'Searching Cars.com');
 
     try {
         browser = await launchBrowser();
@@ -93,6 +111,7 @@ async function scrapeCarscom(params, maxResults = 20) {
         // Reload once if the first attempt comes back empty.
         let rawListings = [];
         for (let attempt = 1; attempt <= 2; attempt++) {
+            if (attempt > 1) sendProgress?.('Cars.com returned no results, retrying...');
             await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
             await page.waitForSelector('fuse-card[id^="vehicle-card-"]', { timeout: 15000 }).catch(() => {});
             rawListings = await extractListings(page);
@@ -205,10 +224,13 @@ async function scrapeCarscom(params, maxResults = 20) {
             }));
         }
 
+        sendProgress?.(`Cars.com: found ${listings.length} listing(s)`);
         await browser.close();
     } catch (err) {
         if (browser) await browser.close();
         throw new Error(`Cars.com scraping failed: ${err.message}`);
+    } finally {
+        stopHeartbeat();
     }
 
     return listings;
@@ -217,9 +239,10 @@ async function scrapeCarscom(params, maxResults = 20) {
 /**
  * Scrape Autotrader for car listings
  */
-async function scrapeAutotrader(params, maxResults = 20) {
+async function scrapeAutotrader(params, maxResults = 20, sendProgress = null) {
     const listings = [];
     let browser;
+    const stopHeartbeat = startHeartbeat(sendProgress, 'Searching Autotrader');
 
     try {
         browser = await launchBrowser();
@@ -300,10 +323,13 @@ async function scrapeAutotrader(params, maxResults = 20) {
             }));
         }
 
+        sendProgress?.(`Autotrader: found ${listings.length} listing(s)`);
         await browser.close();
     } catch (err) {
         if (browser) await browser.close();
         throw new Error(`Autotrader scraping failed: ${err.message}`);
+    } finally {
+        stopHeartbeat();
     }
 
     return listings;
@@ -312,9 +338,10 @@ async function scrapeAutotrader(params, maxResults = 20) {
 /**
  * Scrape KBB for car listings
  */
-async function scrapeKBB(params, maxResults = 20) {
+async function scrapeKBB(params, maxResults = 20, sendProgress = null) {
     const listings = [];
     let browser;
+    const stopHeartbeat = startHeartbeat(sendProgress, 'Searching KBB');
 
     try {
         browser = await launchBrowser();
@@ -412,10 +439,13 @@ async function scrapeKBB(params, maxResults = 20) {
             }));
         }
 
+        sendProgress?.(`KBB: found ${listings.length} listing(s)`);
         await browser.close();
     } catch (err) {
         if (browser) await browser.close();
         throw new Error(`KBB scraping failed: ${err.message}`);
+    } finally {
+        stopHeartbeat();
     }
 
     return listings;
@@ -424,7 +454,7 @@ async function scrapeKBB(params, maxResults = 20) {
 /**
  * Search all sources and combine results
  */
-async function searchAllSources(params, maxResultsPerSource = 10) {
+async function searchAllSources(params, maxResultsPerSource = 10, sendProgress = null) {
     const results = {
         listings: [],
         errors: []
@@ -432,9 +462,9 @@ async function searchAllSources(params, maxResultsPerSource = 10) {
 
     // Run scrapers in parallel
     const scrapers = [
-        { name: 'Cars.com', fn: () => scrapeCarscom(params, maxResultsPerSource) },
-        { name: 'Autotrader', fn: () => scrapeAutotrader(params, maxResultsPerSource) },
-        { name: 'KBB', fn: () => scrapeKBB(params, maxResultsPerSource) }
+        { name: 'Cars.com', fn: () => scrapeCarscom(params, maxResultsPerSource, sendProgress) },
+        { name: 'Autotrader', fn: () => scrapeAutotrader(params, maxResultsPerSource, sendProgress) },
+        { name: 'KBB', fn: () => scrapeKBB(params, maxResultsPerSource, sendProgress) }
     ];
 
     const promises = scrapers.map(async scraper => {

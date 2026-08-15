@@ -15,6 +15,25 @@ const {
 
 const { searchAllSources, scrapeCarscom, scrapeAutotrader, scrapeKBB } = require('./scraper.js');
 
+/**
+ * Pull the progress token out of a `tools/call` request.
+ *
+ * The spec puts it in `params._meta.progressToken` - a sibling of `name` and
+ * `arguments`, not inside the arguments object. Progress notifications are
+ * the standard way to keep a client's request-timeout clock alive on a slow
+ * tool call, which this one routinely is (real-site scraping, up to ~90s
+ * across retries) - without a token there's nowhere to send them.
+ */
+function extractProgressToken(params) {
+    if (!params || typeof params !== 'object') return undefined;
+    const readToken = (source) => {
+        if (!source || typeof source !== 'object') return undefined;
+        const token = source._meta && source._meta.progressToken;
+        return (typeof token === 'string' || typeof token === 'number') ? token : undefined;
+    };
+    return readToken(params) ?? readToken(params.arguments);
+}
+
 // Create server instance
 const server = new Server(
     {
@@ -98,6 +117,18 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 // Handle tool calls
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
+    const progressToken = extractProgressToken(request.params);
+
+    // The MCP spec requires a numeric `progress` field on every notification
+    // (must strictly increase) - clients validate incoming notifications
+    // against that schema and silently drop ones missing it.
+    let progressCount = 0;
+    const sendProgress = progressToken
+        ? (message) => server.notification({
+            method: 'notifications/progress',
+            params: { progressToken, progress: ++progressCount, message },
+        }).catch(() => {})
+        : null;
 
     if (name === 'search_car_deals') {
         try {
@@ -120,6 +151,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
             console.error(`[MCP] Searching for ${params.make} ${params.model} in ${params.zip}`);
             console.error(`[MCP] Sources: ${sources.join(', ')}, Max: ${maxResults}`);
+            sendProgress?.(`Searching ${sources.join(', ')} for ${params.make} ${params.model}...`);
 
             let allListings = [];
             let errors = [];
@@ -130,7 +162,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             if (sources.includes('cars.com')) {
                 console.error('[MCP] Starting Cars.com scraper...');
                 scraperPromises.push(
-                    scrapeCarscom(params, maxResults)
+                    scrapeCarscom(params, maxResults, sendProgress)
                         .then(listings => {
                             console.error(`[MCP] Cars.com returned ${listings.length} listings`);
                             return { source: 'Cars.com', listings };
@@ -145,7 +177,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             if (sources.includes('autotrader')) {
                 console.error('[MCP] Starting Autotrader scraper...');
                 scraperPromises.push(
-                    scrapeAutotrader(params, maxResults)
+                    scrapeAutotrader(params, maxResults, sendProgress)
                         .then(listings => {
                             console.error(`[MCP] Autotrader returned ${listings.length} listings`);
                             return { source: 'Autotrader', listings };
@@ -160,7 +192,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             if (sources.includes('kbb')) {
                 console.error('[MCP] Starting KBB scraper...');
                 scraperPromises.push(
-                    scrapeKBB(params, maxResults)
+                    scrapeKBB(params, maxResults, sendProgress)
                         .then(listings => {
                             console.error(`[MCP] KBB returned ${listings.length} listings`);
                             return { source: 'KBB', listings };
@@ -183,6 +215,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             }
 
             console.error(`[MCP] Total listings: ${allListings.length}`);
+            sendProgress?.(`Done - found ${allListings.length} listing(s) total`);
 
             // Format output
             let output = `# Car Deals Search Results\n\n`;

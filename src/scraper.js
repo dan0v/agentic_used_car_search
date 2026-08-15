@@ -88,13 +88,22 @@ async function scrapeCarscom(params, maxResults = 20) {
 
         url += urlParams.toString();
 
-        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-        await new Promise(r => setTimeout(r, 5000));
+        // Cars.com occasionally serves a card-less page to automated
+        // traffic (probabilistic bot check, not a real "no results" case).
+        // Reload once if the first attempt comes back empty.
+        let rawListings = [];
+        for (let attempt = 1; attempt <= 2; attempt++) {
+            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+            await page.waitForSelector('fuse-card[id^="vehicle-card-"]', { timeout: 15000 }).catch(() => {});
+            rawListings = await extractListings(page);
+            if (rawListings.length > 0) break;
+        }
 
-        // Extract listings from .vehicle-card elements
-        const rawListings = await page.evaluate(() => {
+        async function extractListings(page) {
+            // Extract listings from <fuse-card id="vehicle-card-..."> elements
+            return page.evaluate(() => {
             const results = [];
-            const cards = document.querySelectorAll('.vehicle-card');
+            const cards = document.querySelectorAll('fuse-card[id^="vehicle-card-"]');
 
             cards.forEach(card => {
                 const text = card.innerText;
@@ -104,15 +113,15 @@ async function scrapeCarscom(params, maxResults = 20) {
                 let price = null;
                 let mileage = null;
                 let dealRating = null;
-                let dealerName = null;
                 let location = null;
 
                 for (const line of lines) {
                     const trimmed = line.trim();
 
-                    // Title: Year Make Model (e.g., "2020 Toyota Camry XSE")
-                    if (/^(19|20)\d{2}\s+\w+/.test(trimmed) && !title) {
-                        title = trimmed;
+                    // Title: optional condition prefix + Year Make Model
+                    // (e.g., "Used 2020 Toyota Camry XSE", "2020 Toyota Camry XSE")
+                    if (/^(?:(?:used|new|certified[\w\s-]*)\s+)?(19|20)\d{2}\s+\S+/i.test(trimmed) && !title) {
+                        title = trimmed.replace(/^(used|new|certified[\w\s-]*)\s+/i, '');
                         continue;
                     }
 
@@ -142,23 +151,25 @@ async function scrapeCarscom(params, maxResults = 20) {
                     }
                 }
 
-                // Get dealer name - usually after reviews count
+                // Dealer name has no distinct class anymore. It reliably sits
+                // on the line right before the star-rating line (e.g. "4.8").
                 const dealerMatch = card.querySelector('.dealer-name');
-                if (dealerMatch) {
-                    dealerName = dealerMatch.innerText.trim();
-                } else {
-                    // Fallback: look for line before reviews
+                let dealerName = dealerMatch ? dealerMatch.innerText.trim() : null;
+                if (!dealerName) {
                     for (let i = 0; i < lines.length; i++) {
-                        if (lines[i].includes('reviews') && i > 0) {
-                            dealerName = lines[i - 1].trim();
+                        if (/^\d+\.\d+$/.test(lines[i].trim()) && i > 0) {
+                            const candidate = lines[i - 1].trim();
+                            if (candidate && candidate !== dealRating && candidate !== location) {
+                                dealerName = candidate;
+                            }
                             break;
                         }
                     }
                 }
 
                 // Get URL from the card link
-                const linkEl = card.querySelector('a.vehicle-card-link');
-                const href = linkEl ? linkEl.getAttribute('href') : null;
+                const linkEl = card.querySelector('[data-card-href]');
+                const href = linkEl ? linkEl.getAttribute('data-card-href') : null;
 
                 // Check for CarFax badges
                 const fullText = text.toLowerCase();
@@ -171,8 +182,9 @@ async function scrapeCarscom(params, maxResults = 20) {
                 }
             });
 
-            return results;
-        });
+                return results;
+            });
+        }
 
         for (const item of rawListings.slice(0, maxResults)) {
             listings.push(new CarListing({

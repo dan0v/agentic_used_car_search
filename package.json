@@ -8,7 +8,8 @@
   },
   "scripts": {
     "start": "node src/server.js",
-    "test": "node -e \"const { scrapeCarscom } = require('./src/scraper.js'); scrapeCarscom({ make: 'Toyota', model: 'Camry' }, 3).then(r => r.forEach(l => console.log(l.format())))\""
+    "test": "node -e \"const { scrapeCarscom } = require('./src/scraper.js'); scrapeCarscom({ make: 'Toyota', model: 'Camry' }, 3).then(r => r.forEach(l => console.log(l.format())))\"",
+    "test:mcp": "node test/mcp-client.test.js"
   },
   "keywords": [
     "mcp",

@@ -16,22 +16,76 @@ An MCP (Model Context Protocol) server that aggregates and searches car listings
 - **Chrome/Chromium** browser installed (required by Puppeteer)
   - If Chrome is not in the default location, set `PUPPETEER_EXECUTABLE_PATH` environment variable to point to your Chrome/Chromium binary
 
-### Installation
+### Add to your MCP client (recommended)
 
-```bash
-# Clone the repository
-git clone https://github.com/SiddarthaKoppaka/car_deals_search_mcp.git
-cd car_deals_search_mcp
+No clone, no install. Add this to your client's MCP config and restart it — `npx`
+fetches and runs the server on first launch:
 
-# Install dependencies (includes Puppeteer)
-npm install
+```json
+{
+  "mcpServers": {
+    "car-deals": {
+      "command": "npx",
+      "args": ["-y", "github:ejlevin1/car_deals_search_mcp"]
+    }
+  }
+}
 ```
 
-### Using with MCP Clients
+If Chrome is not in the default location, point Puppeteer at it:
 
-Configure your MCP client (Claude Desktop, VS Code, GitHub Copilot, etc.) to use this server:
+```json
+{
+  "mcpServers": {
+    "car-deals": {
+      "command": "npx",
+      "args": ["-y", "github:ejlevin1/car_deals_search_mcp"],
+      "env": {
+        "PUPPETEER_EXECUTABLE_PATH": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+      }
+    }
+  }
+}
+```
 
-**For Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
+Where that config lives:
+
+| Client | Config file |
+|--------|-------------|
+| Claude Code | `.mcp.json` in your project, or `~/.claude.json` |
+| Claude Desktop (macOS) | `~/Library/Application Support/Claude/claude_desktop_config.json` |
+| Claude Desktop (Windows) | `%APPDATA%\Claude\claude_desktop_config.json` |
+| VS Code / Copilot | `.vscode/mcp.json` (under a `servers` key rather than `mcpServers`) |
+| Cursor | `~/.cursor/mcp.json` |
+
+Notes:
+
+- The transport is **stdio** — no port, no URL, nothing to start beforehand.
+- `npx` installs into its cache on first run, so the **first launch takes ~15-20s**.
+  Later launches are fast until the cache is cleared.
+- This is not published to the npm registry; the `github:` spec above installs
+  straight from this repo's default branch.
+
+Verify it works without any client:
+
+```bash
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"probe","version":"1"}}}' \
+  | npx -y github:ejlevin1/car_deals_search_mcp
+```
+
+You should see `Car Deals MCP Server running on stdio` followed by a JSON result
+naming `car-deals-mcp`.
+
+### Run from a local clone instead
+
+Use this if you want to modify the scrapers — edits take effect on the next
+client restart, with no `npx` cache in the way:
+
+```bash
+git clone https://github.com/ejlevin1/car_deals_search_mcp.git
+cd car_deals_search_mcp
+npm ci
+```
 
 ```json
 {
@@ -44,14 +98,16 @@ Configure your MCP client (Claude Desktop, VS Code, GitHub Copilot, etc.) to use
 }
 ```
 
-**For other MCP clients**, refer to their documentation and use:
-- **Command**: `node`
-- **Args**: `["<absolute-path-to-repo>/src/server.js"]`
+The path must be absolute — MCP clients do not launch servers from the repo
+directory.
 
 ### Testing Standalone
 
 ```bash
-# Run the test command
+# Full end-to-end MCP client test (hits Cars.com for real, ~60-90s)
+npm run test:mcp
+
+# Quick scraper smoke test
 npm test
 
 # Or test manually with a specific search
@@ -67,6 +123,9 @@ scrapeCarscom({
 "
 ```
 
+If you have [`just`](https://github.com/casey/just) installed, `just --list`
+shows every task (`just check`, `just test`, `just build`, ...).
+
 ---
 
 ## ✨ Features
@@ -81,11 +140,27 @@ scrapeCarscom({
 
 ## 📊 Supported Sources
 
-| Source     | Price | Mileage | Deal Rating | Dealer Info | CARFAX Filters |
-|------------|:-----:|:-------:|:-----------:|:-----------:|:--------------:|
-| Cars.com   | ✅    | ✅      | ✅          | ✅          | ✅             |
-| Autotrader | ✅    | ✅      | ⚠️ Limited   | ✅          | ⚠️ Limited     |
-| KBB        | ✅    | ✅      | ✅          | ⚠️ Limited   | ⚠️ Limited     |
+| Source     | Price | Mileage | Color | VIN / Specs | Deal Rating | Dealer Info | CARFAX Filters |
+|------------|:-----:|:-------:|:-----:|:-----------:|:-----------:|:-----------:|:--------------:|
+| Cars.com   | ✅    | ✅      | ✅    | ✅          | ✅          | ✅          | ✅             |
+| Autotrader | ✅    | ✅      | ❌    | ❌          | ⚠️ Limited   | ✅          | ⚠️ Limited     |
+| KBB        | ✅    | ✅      | ❌    | ❌          | ✅          | ⚠️ Limited   | ⚠️ Limited     |
+
+Cars.com cards embed a `data-vehicle-details` JSON payload, which is where the
+VIN, trim, body style, drivetrain, fuel type, exterior color, dealer identity and
+CPO flag come from. The scraper reads that payload first and falls back to
+parsing the visible card text, so a markup reshuffle degrades the results
+instead of emptying them.
+
+Two caveats:
+
+- Exterior color in search results is a generic slug (`Silver`, `Gray`, `Blue`),
+  not the manufacturer's marketing name. Cars.com only publishes the latter
+  ("Predawn Gray Mica") on the detail page — use
+  [`get_listing_details`](#-mcp-tool-get_listing_details) when the exact paint
+  name matters. Interior color is detail-page only.
+- Autotrader and KBB cards use different markup and carry no equivalent payload,
+  so their listings return the basics only.
 
 ---
 
@@ -98,6 +173,7 @@ scrapeCarscom({
 | `make`       | string   | ✅       | Car manufacturer (e.g., "Toyota", "Honda") |
 | `model`      | string   | ✅       | Car model (e.g., "Camry", "Accord") |
 | `zip`        | string   | ❌       | ZIP code for local search (default: "90210") |
+| `maxDistance`| integer  | ❌       | Search radius in miles from the ZIP (e.g. 25, 50, 100, 500). `0` = nationwide. Default: site default (~30-50 mi) |
 | `yearMin`    | integer  | ❌       | Minimum model year |
 | `yearMax`    | integer  | ❌       | Maximum model year |
 | `priceMax`   | integer  | ❌       | Maximum price in USD |
@@ -111,15 +187,73 @@ scrapeCarscom({
 ### Example Response
 
 ```
-🚗 2021 Toyota Camry XSE
-   💰 Price: $23,491
-   📏 Mileage: 52,649 mi
-   ⭐ Deal Rating: Good Deal
-   🏆 CARFAX: 1-Owner | No Accidents | Personal Use
-   🏪 Dealer: Valencia BMW
-   🌐 Source: Cars.com
-   🔗 https://www.cars.com/vehicledetail/...
+2024 Toyota Camry SE
+  Price: $27,400 (dropped $1.4K)
+  Est. Payment: $513/mo
+  Mileage: 47,822 mi.
+  Exterior Color: White
+  Specs: SE | Sedan | FWD | Gasoline
+  VIN: 4T1G11AK4RU902993
+  Deal Rating: Good Deal
+  Badges: Certified Pre-Owned | 1-Owner | No Accidents
+  Awards: American-Made Index
+  Dealer: North Hollywood Toyota (4.5 stars)
+  Location: Los Angeles, CA (5 mi)
+  Source: Cars.com
+  Photo: https://platform.cstatic-images.com/in/v2/...jpg
+  https://www.cars.com/vehicledetail/...
 ```
+
+---
+
+## 🔧 MCP Tool: `get_listing_details`
+
+Fetches a single listing's detail page and returns it as markdown. Search results
+only carry the summary card (title, price, mileage, deal rating, dealer); the
+detail page adds VIN, trim, engine, transmission, drivetrain, MPG, exterior and
+interior colors, the full options/features list, price history, vehicle history
+and seller notes.
+
+Rather than parsing each field with a selector, the page is pruned (nav, ads,
+scripts, recommendation carousels removed) and converted to markdown. Nothing to
+re-fix when the sites reshuffle their markup, and the caller sees every detail
+the page shows.
+
+### Parameters
+
+| Parameter       | Type    | Required | Description |
+|-----------------|---------|----------|-------------|
+| `url`           | string  | ✅       | Detail page URL from a `search_car_deals` result. Must be on cars.com, autotrader.com, or kbb.com |
+| `includeLinks`  | boolean | ❌       | Keep hyperlink URLs (link text is kept either way; default: `false`) |
+| `includeImages` | boolean | ❌       | Keep image references (default: `false`) |
+| `maxLength`     | integer | ❌       | Truncate markdown at N characters (default: 30000) |
+
+### Example Response (excerpt)
+
+```markdown
+# Used 2020 Toyota Camry SE
+
+**Source:** Cars.com
+**URL:** https://www.cars.com/vehicledetail/...
+
+## Features & specs
+
+VIN: 4T1G11AK3LU858833 / Stock #: C131351
+
+- Predawn Gray Mica exterior color
+- Dynamic Force 2.5L I-4 port/direct injection, DOHC, VVT-iE/VVT-i engine
+- 28-39 mpg
+- Front-wheel Drive drivetrain
+- 8-Speed Automatic transmission
+
+### Safety
+- Automatic Emergency Braking
+- Lane Departure Warning
+```
+
+Detail pages are served behind an anti-bot interstitial more often than search
+pages are; the tool waits it out (up to 45s) rather than returning the challenge
+page, so a call can take ~20-60s.
 
 ---
 

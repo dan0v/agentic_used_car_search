@@ -1,0 +1,11 @@
+{
+    "Exclude": [
+        "^node_modules/",
+        "^assets/",
+        "\\.tgz$",
+        "package-lock\\.json$"
+    ],
+    "Disable": {
+        "MaxLineLength": true
+    }
+}

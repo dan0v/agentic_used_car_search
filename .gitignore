@@ -24,5 +24,8 @@ Thumbs.db
 dist/
 build/
 
+# npm pack output (`just build`)
+*.tgz
+
 # Puppeteer
 .cache/

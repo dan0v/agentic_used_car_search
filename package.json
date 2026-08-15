@@ -9,7 +9,13 @@
   "scripts": {
     "start": "node src/server.js",
     "test": "node -e \"const { scrapeCarscom } = require('./src/scraper.js'); scrapeCarscom({ make: 'Toyota', model: 'Camry' }, 3).then(r => r.forEach(l => console.log(l.format())))\"",
-    "test:mcp": "node test/mcp-client.test.js"
+    "test:mcp": "node test/mcp-client.test.js",
+    "lint": "eslint src test eslint.config.js",
+    "lint:fix": "eslint --fix src test eslint.config.js",
+    "ec": "editorconfig-checker",
+    "syntax": "node --check src/server.js && node --check src/scraper.js && node --check test/mcp-client.test.js",
+    "check": "npm run lint && npm run ec && npm run syntax",
+    "build": "npm pack"
   },
   "keywords": [
     "mcp",
@@ -26,6 +32,11 @@
     "@modelcontextprotocol/sdk": "^1.24.3",
     "puppeteer": "^24.32.1",
     "puppeteer-extra": "^3.3.6",
-    "puppeteer-extra-plugin-stealth": "^2.11.2"
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "turndown": "^7.2.4"
+  },
+  "devDependencies": {
+    "editorconfig-checker": "^6.1.1",
+    "eslint": "^9.39.5"
   }
 }

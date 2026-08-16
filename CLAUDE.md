@@ -108,6 +108,33 @@ reason.
 - **Autotrader and KBB** have no equivalent payload and use fragile
   class-name/positional selectors. They return title/price/mileage only and
   break often.
+
+### An unrecognized Cars.com filter looks exactly like a broken scraper
+
+Cars.com does not reject a bad `makes[]`/`models[]` slug — it drops the filter
+and serves a results page with zero cards, which is indistinguishable from the
+bot-check variant. So a *query* mistake shows up in the logs as
+`vehicle cards never appeared`, and the obvious debugging path (blame the
+selectors) is the wrong one. Two separate things have to be right:
+
+- **Slug spelling** — `carscomSlug()`. Make and model are joined by a hyphen
+  (`mercedes_benz-gle_450`), so every separator inside a name becomes `_`,
+  `&`/`+` are spelled out, apostrophes vanish, and `.` survives (`ID.4` →
+  `id.4`). Verified against the site's whole filter vocabulary. Do **not**
+  replace this with a harvested lookup table: the vocabulary the page exposes
+  truncates at 100 models per make, so a table is incomplete for exactly the
+  makes people search most.
+- **Name validity** — a well-formed slug can still name nothing. `GLE` is
+  clean but Cars.com only has `gle_350`/`gle_450`/`gle_class`. On a zero-card
+  result the scraper reads the make's real model list out of the page's
+  `script#CarsWeb.SearchController.index` blob (`srp_filters.sections`) and
+  attaches ranked `modelSuggestions` to the returned array, which server.js
+  renders as a did-you-mean. A missing blob means the interstitial, not a bad
+  name — treat it as unknown and say nothing.
+
+Single-word names (`toyota-camry`) survive a plain `toLowerCase()`, which is
+why this went unnoticed: the test suite only searched Toyota Camry. Keep the
+Mercedes-Benz cases in `test/mcp-client.test.js`.
 - **Detail pages** (`fetchListingDetails`) are deliberately *not* field-parsed.
   The page is pruned (nav, ads, scripts, carousels) and run through Turndown to
   markdown. That is the whole design: no selectors to maintain when the sites

@@ -14,16 +14,26 @@
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
-const { StdioClientTransport } = require('@modelcontextprotocol/sdk/client/stdio.js');
+const { StdioClientTransport, getDefaultEnvironment } = require('@modelcontextprotocol/sdk/client/stdio.js');
 const { CallToolResultSchema } = require('@modelcontextprotocol/sdk/types.js');
 
 const SERVER_PATH = path.join(__dirname, '..', 'src', 'server.js');
 
 async function main() {
+    // The SDK only forwards a fixed safe subset of the environment to the
+    // server subprocess (HOME, LOGNAME, PATH, SHELL, TERM, USER), so
+    // CAR_DEALS_LOG_LEVEL set on this process would otherwise be dropped and
+    // `CAR_DEALS_LOG_LEVEL=debug npm run test:mcp` would silently do nothing.
+    const env = { ...getDefaultEnvironment() };
+    if (process.env.CAR_DEALS_LOG_LEVEL) {
+        env.CAR_DEALS_LOG_LEVEL = process.env.CAR_DEALS_LOG_LEVEL;
+    }
+
     const transport = new StdioClientTransport({
         command: process.execPath,
         args: [SERVER_PATH],
         stderr: 'inherit',
+        env,
     });
 
     const client = new Client({ name: 'car-deals-mcp-test-client', version: '1.0.0' });

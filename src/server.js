@@ -14,6 +14,9 @@ const {
 } = require('@modelcontextprotocol/sdk/types.js');
 
 const { scrapeCarscom, scrapeAutotrader, scrapeKBB, fetchListingDetails } = require('./scraper.js');
+const { logger, installGlobalHandlers } = require('./logger.js');
+
+installGlobalHandlers();
 
 /**
  * Pull the progress token out of a `tools/call` request.
@@ -32,6 +35,25 @@ function extractProgressToken(params) {
         return (typeof token === 'string' || typeof token === 'number') ? token : undefined;
     };
     return readToken(params) ?? readToken(params.arguments);
+}
+
+/**
+ * Wrap a request handler so any exception it lets escape is written to stderr
+ * before being re-thrown to the SDK.
+ *
+ * The SDK turns a thrown error into a JSON-RPC error response, which means the
+ * client learns about the failure and the server operator does not. Re-throwing
+ * after logging preserves the client-facing behaviour exactly.
+ */
+function logToolFailures(handler) {
+    return async (request) => {
+        try {
+            return await handler(request);
+        } catch (err) {
+            logger.error(`Unhandled error in tool "${request?.params?.name ?? 'unknown'}"`, err);
+            throw err;
+        }
+    };
 }
 
 // Create server instance
@@ -145,9 +167,24 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 });
 
 // Handle tool calls
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
+//
+// Wrapped in `logToolFailures` so that nothing thrown here reaches the SDK
+// without first being written to stderr. The per-tool handlers below catch
+// their own failures and answer the client with `isError`; this outer wrapper
+// is for everything they do not catch, which previously left no trace at all
+// on the server side.
+server.setRequestHandler(CallToolRequestSchema, logToolFailures(async (request) => {
     const { name, arguments: args } = request.params;
     const progressToken = extractProgressToken(request.params);
+
+    logger.info(`Tool call: ${name}`);
+    logger.debug(`Arguments: ${logger.preview(args)}`);
+    // A missing progress token silently disables the keepalive that stops slow
+    // scrapes from tripping the client's tool-call timeout, and there is no
+    // other symptom until a call mysteriously times out.
+    logger.debug(progressToken === undefined
+        ? 'No progressToken on this request - progress notifications disabled'
+        : `Progress token: ${JSON.stringify(progressToken)}`);
 
     // The MCP spec requires a numeric `progress` field on every notification
     // (must strictly increase) - clients validate incoming notifications
@@ -157,7 +194,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         ? (message) => server.notification({
             method: 'notifications/progress',
             params: { progressToken, progress: ++progressCount, message },
-        }).catch(() => {})
+        }).catch(err => logger.debug(`Progress notification failed: ${err.message}`))
         : null;
 
     if (name === 'search_car_deals') {
@@ -180,63 +217,47 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             // Default to just cars.com for reliability
             const sources = args.sources || ['cars.com'];
 
-            console.error(`[MCP] Searching for ${params.make} ${params.model} in ${params.zip}`);
-            console.error(`[MCP] Sources: ${sources.join(', ')}, Max: ${maxResults}`);
+            logger.info(`Searching for ${params.make} ${params.model} in ${params.zip}`);
+            logger.info(`Sources: ${sources.join(', ')}, Max: ${maxResults}`);
+            logger.debug(`Resolved params: ${logger.preview(params)}`);
             sendProgress?.(`Searching ${sources.join(', ')} for ${params.make} ${params.model}...`);
 
             const allListings = [];
             const errors = [];
 
-            // Run selected scrapers
+            // Every source runs the same way; the only differences are the
+            // label and the scraper function. Timing each one matters here -
+            // the progress-heartbeat design exists precisely because these
+            // routinely outrun a client's default timeout, and until now
+            // nothing recorded how long one actually took.
+            const runScraper = (label, scrape) => {
+                logger.info(`Starting ${label} scraper...`);
+                const startedAt = Date.now();
+                const elapsed = () => `${((Date.now() - startedAt) / 1000).toFixed(1)}s`;
+                return scrape(params, maxResults, sendProgress)
+                    .then(listings => {
+                        logger.info(`${label} returned ${listings.length} listings`);
+                        logger.debug(`${label} finished in ${elapsed()} (requested max ${maxResults})`);
+                        return { source: label, listings };
+                    })
+                    .catch(err => {
+                        logger.error(`${label} error`, err);
+                        logger.debug(`${label} failed after ${elapsed()}`);
+                        return { source: label, error: err.message, listings: [] };
+                    });
+            };
+
             const scraperPromises = [];
+            if (sources.includes('cars.com')) scraperPromises.push(runScraper('Cars.com', scrapeCarscom));
+            if (sources.includes('autotrader')) scraperPromises.push(runScraper('Autotrader', scrapeAutotrader));
+            if (sources.includes('kbb')) scraperPromises.push(runScraper('KBB', scrapeKBB));
 
-            if (sources.includes('cars.com')) {
-                console.error('[MCP] Starting Cars.com scraper...');
-                scraperPromises.push(
-                    scrapeCarscom(params, maxResults, sendProgress)
-                        .then(listings => {
-                            console.error(`[MCP] Cars.com returned ${listings.length} listings`);
-                            return { source: 'Cars.com', listings };
-                        })
-                        .catch(err => {
-                            console.error(`[MCP] Cars.com error: ${err.message}`);
-                            return { source: 'Cars.com', error: err.message, listings: [] };
-                        })
-                );
-            }
-
-            if (sources.includes('autotrader')) {
-                console.error('[MCP] Starting Autotrader scraper...');
-                scraperPromises.push(
-                    scrapeAutotrader(params, maxResults, sendProgress)
-                        .then(listings => {
-                            console.error(`[MCP] Autotrader returned ${listings.length} listings`);
-                            return { source: 'Autotrader', listings };
-                        })
-                        .catch(err => {
-                            console.error(`[MCP] Autotrader error: ${err.message}`);
-                            return { source: 'Autotrader', error: err.message, listings: [] };
-                        })
-                );
-            }
-
-            if (sources.includes('kbb')) {
-                console.error('[MCP] Starting KBB scraper...');
-                scraperPromises.push(
-                    scrapeKBB(params, maxResults, sendProgress)
-                        .then(listings => {
-                            console.error(`[MCP] KBB returned ${listings.length} listings`);
-                            return { source: 'KBB', listings };
-                        })
-                        .catch(err => {
-                            console.error(`[MCP] KBB error: ${err.message}`);
-                            return { source: 'KBB', error: err.message, listings: [] };
-                        })
-                );
+            if (scraperPromises.length === 0) {
+                logger.error(`No known sources selected (got: ${logger.preview(sources)})`);
             }
 
             const results = await Promise.all(scraperPromises);
-            console.error(`[MCP] All scrapers completed`);
+            logger.info('All scrapers completed');
 
             for (const result of results) {
                 allListings.push(...result.listings);
@@ -245,7 +266,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 }
             }
 
-            console.error(`[MCP] Total listings: ${allListings.length}`);
+            logger.info(`Total listings: ${allListings.length}`);
             sendProgress?.(`Done - found ${allListings.length} listing(s) total`);
 
             // Format output
@@ -289,6 +310,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 }
             }
 
+            logger.trace(`Response: ${logger.preview(output)}`);
+
             return {
                 content: [
                     {
@@ -298,6 +321,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 ],
             };
         } catch (error) {
+            // Previously this returned isError to the client and wrote nothing
+            // to stderr, so a failure in argument handling or output formatting
+            // was invisible from the server side.
+            logger.error('search_car_deals failed', error);
             return {
                 content: [
                     {
@@ -312,7 +339,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     if (name === 'get_listing_details') {
         try {
-            console.error(`[MCP] Fetching listing details: ${args.url}`);
+            logger.info(`Fetching listing details: ${args.url}`);
+            logger.debug(`Detail options: includeLinks=${args.includeLinks ?? false}, includeImages=${args.includeImages ?? false}, maxLength=${args.maxLength ?? 30000}`);
             sendProgress?.('Loading listing detail page...');
 
             const details = await fetchListingDetails(
@@ -325,12 +353,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 sendProgress
             );
 
-            console.error(`[MCP] Detail page extracted: ${details.markdown.length} chars`);
+            logger.info(`Detail page extracted: ${details.markdown.length} chars`);
+            logger.debug(`Resolved source: ${details.source}, title: ${details.title || '(none)'}, truncated: ${details.truncated}`);
 
             let output = `# ${details.title || 'Listing Details'}\n\n`;
             output += `**Source:** ${details.source}\n`;
             output += `**URL:** ${details.url}\n\n---\n\n`;
             output += details.markdown;
+
+            logger.trace(`Response: ${logger.preview(output)}`);
 
             return {
                 content: [
@@ -341,7 +372,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 ],
             };
         } catch (error) {
-            console.error(`[MCP] Detail fetch error: ${error.message}`);
+            logger.error('get_listing_details failed', error);
             return {
                 content: [
                     {
@@ -355,13 +386,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     throw new Error(`Unknown tool: ${name}`);
-});
+}));
 
 // Start server
 async function main() {
     const transport = new StdioServerTransport();
     await server.connect(transport);
-    console.error('Car Deals MCP Server running on stdio');
+    logger.info(`Car Deals MCP Server running on stdio (log level: ${logger.level})`);
+    if (logger.level === 'info') {
+        logger.info('Set CAR_DEALS_LOG_LEVEL=debug (or pass --verbose) for request arguments, search URLs, timings and stack traces.');
+    }
 }
 
-main().catch(console.error);
+main().catch(err => {
+    logger.error('Server failed to start', err);
+    process.exit(1);
+});

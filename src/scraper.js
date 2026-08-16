@@ -1,6 +1,7 @@
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const TurndownService = require('turndown');
+const { logger } = require('./logger.js');
 puppeteer.use(StealthPlugin());
 
 /**
@@ -150,6 +151,7 @@ async function scrapeCarscom(params, maxResults = 20, sendProgress = null) {
         if (params.personalUse) urlParams.append('personal_use', 'true');
 
         url += urlParams.toString();
+        logger.debug(`Cars.com search URL: ${url}`);
 
         // Cars.com occasionally serves a card-less page to automated
         // traffic (probabilistic bot check, not a real "no results" case).
@@ -157,9 +159,12 @@ async function scrapeCarscom(params, maxResults = 20, sendProgress = null) {
         let rawListings = [];
         for (let attempt = 1; attempt <= 2; attempt++) {
             if (attempt > 1) sendProgress?.('Cars.com returned no results, retrying...');
+            logger.debug(`Cars.com attempt ${attempt}/2`);
             await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-            await page.waitForSelector('fuse-card[id^="vehicle-card-"]', { timeout: 15000 }).catch(() => {});
+            await page.waitForSelector('fuse-card[id^="vehicle-card-"]', { timeout: 15000 })
+                .catch(() => logger.debug('Cars.com vehicle cards never appeared - page may be the card-less bot-check variant'));
             rawListings = await extractListings(page);
+            logger.debug(`Cars.com attempt ${attempt} extracted ${rawListings.length} raw card(s)`);
             if (rawListings.length > 0) break;
         }
 
@@ -382,7 +387,9 @@ async function scrapeCarscom(params, maxResults = 20, sendProgress = null) {
         await browser.close();
     } catch (err) {
         if (browser) await browser.close();
-        throw new Error(`Cars.com scraping failed: ${err.message}`);
+        // `cause` keeps the original stack reachable - without it the caller
+        // learns a navigation timed out but never which navigation.
+        throw new Error(`Cars.com scraping failed: ${err.message}`, { cause: err });
     } finally {
         stopHeartbeat();
     }
@@ -424,6 +431,7 @@ async function scrapeAutotrader(params, maxResults = 20, sendProgress = null) {
         if (urlParams.toString()) {
             url += '?' + urlParams.toString();
         }
+        logger.debug(`Autotrader search URL: ${url}`);
 
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
         await new Promise(r => setTimeout(r, 5000));
@@ -482,7 +490,7 @@ async function scrapeAutotrader(params, maxResults = 20, sendProgress = null) {
         await browser.close();
     } catch (err) {
         if (browser) await browser.close();
-        throw new Error(`Autotrader scraping failed: ${err.message}`);
+        throw new Error(`Autotrader scraping failed: ${err.message}`, { cause: err });
     } finally {
         stopHeartbeat();
     }
@@ -519,6 +527,7 @@ async function scrapeKBB(params, maxResults = 20, sendProgress = null) {
         if (params.priceMax) url += `&maxPrice=${params.priceMax}`;
         if (params.mileageMax) url += `&maxMileage=${params.mileageMax}`;
         if (params.maxDistance) url += `&searchRadius=${params.maxDistance}`;
+        logger.debug(`KBB search URL: ${url}`);
 
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
         await new Promise(r => setTimeout(r, 5000));
@@ -599,7 +608,7 @@ async function scrapeKBB(params, maxResults = 20, sendProgress = null) {
         await browser.close();
     } catch (err) {
         if (browser) await browser.close();
-        throw new Error(`KBB scraping failed: ${err.message}`);
+        throw new Error(`KBB scraping failed: ${err.message}`, { cause: err });
     } finally {
         stopHeartbeat();
     }
@@ -744,6 +753,7 @@ async function fetchListingDetails(rawUrl, options = {}, sendProgress = null) {
     } = options;
 
     let browser;
+    logger.debug(`Detail fetch: ${url} (source: ${source}, maxLength: ${maxLength})`);
     const stopHeartbeat = startHeartbeat(sendProgress, `Loading ${source} listing`);
 
     try {
@@ -761,7 +771,10 @@ async function fetchListingDetails(rawUrl, options = {}, sendProgress = null) {
         // bot-check interstitial first ("Performing security verification").
         // It clears itself and navigates on to the real page after a few
         // seconds, so poll rather than treating the interstitial as the page.
-        await waitOutInterstitial(page, sendProgress);
+        const cleared = await waitOutInterstitial(page, sendProgress);
+        if (!cleared) {
+            logger.error(`${source} bot-check interstitial did not clear within 45s - extracted content is probably the challenge page, not the listing`);
+        }
 
         // The full options list usually sits behind a "see all features"
         // toggle. Best-effort: expanding it is the whole point of the tool,
@@ -779,6 +792,7 @@ async function fetchListingDetails(rawUrl, options = {}, sendProgress = null) {
             for (const details of document.querySelectorAll('details')) details.open = true;
             return count;
         }).catch(() => 0);
+        logger.debug(`Expanded ${expanded} "see all features" control(s)`);
         if (expanded > 0) await new Promise(r => setTimeout(r, 1500));
 
         sendProgress?.(`Extracting details from ${source} listing...`);
@@ -822,7 +836,7 @@ async function fetchListingDetails(rawUrl, options = {}, sendProgress = null) {
 
         return { url, source, title: extracted.title, markdown, truncated };
     } catch (err) {
-        throw new Error(`Failed to fetch listing details from ${source}: ${err.message}`);
+        throw new Error(`Failed to fetch listing details from ${source}: ${err.message}`, { cause: err });
     } finally {
         if (browser) await browser.close().catch(() => {});
         stopHeartbeat();

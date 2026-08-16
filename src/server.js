@@ -259,7 +259,12 @@ server.setRequestHandler(CallToolRequestSchema, logToolFailures(async (request) 
             const results = await Promise.all(scraperPromises);
             logger.info('All scrapers completed');
 
+            // A scraper may attach `modelSuggestions` when it can prove the
+            // model name does not exist on that site (see suggestCarscomModels).
+            // Spreading into allListings drops it, so collect it first.
+            const suggestions = [];
             for (const result of results) {
+                if (result.listings.modelSuggestions) suggestions.push(result.listings.modelSuggestions);
                 allListings.push(...result.listings);
                 if (result.error) {
                     errors.push(`${result.source}: ${result.error}`);
@@ -295,6 +300,15 @@ server.setRequestHandler(CallToolRequestSchema, logToolFailures(async (request) 
 
             if (allListings.length === 0) {
                 output += `No listings found.\n`;
+                // Without this, an unrecognized model name is indistinguishable
+                // from genuinely empty inventory - both just say "no listings".
+                for (const hint of suggestions) {
+                    output += `\n${hint.source || 'Cars.com'} has no ${hint.make} model named "${hint.input}". Closest matches:\n`;
+                    for (const opt of hint.options) {
+                        output += `- ${opt.name}${opt.count ? ` (${opt.count} listed)` : ''}\n`;
+                    }
+                    output += `\nRe-run the search with one of these as \`model\`.\n`;
+                }
             } else {
                 output += `Found **${allListings.length}** listings:\n\n`;
 

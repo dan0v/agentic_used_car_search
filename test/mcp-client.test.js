@@ -13,6 +13,7 @@
 
 const assert = require('node:assert/strict');
 const path = require('node:path');
+const { carscomSlug } = require('../src/scraper.js');
 const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
 const { StdioClientTransport, getDefaultEnvironment } = require('@modelcontextprotocol/sdk/client/stdio.js');
 const { CallToolResultSchema } = require('@modelcontextprotocol/sdk/types.js');
@@ -28,6 +29,26 @@ async function main() {
     if (process.env.CAR_DEALS_LOG_LEVEL) {
         env.CAR_DEALS_LOG_LEVEL = process.env.CAR_DEALS_LOG_LEVEL;
     }
+
+    // --- URL slug rules (offline) ---
+    // A wrong slug does not error - Cars.com drops the filter and serves a
+    // page with zero cards, which looks exactly like the bot-check variant.
+    // These pairs come from the site's own filter vocabulary; every one of
+    // them was a real miss before the slug rules existed.
+    for (const [input, expected] of [
+        ['Mercedes-Benz', 'mercedes_benz'],      // hyphen inside a name
+        ['GLE 450', 'gle_450'],                  // space inside a name
+        ['Town & Country', 'town_and_country'],  // ampersand spelled out
+        ['EQE 350+', 'eqe_350_plus'],            // plus spelled out
+        ['Li\'l Red Express', 'lil_red_express'], // apostrophe dropped, not split
+        ['ID.4', 'id.4'],                        // period between alphanumerics survives
+        ['ID. Buzz', 'id_buzz'],                 // ... but a trailing one separates
+        ['C10/K10', 'c10_k10'],                  // slash is a separator
+        ['Camry', 'camry'],                      // single word - the case that always worked
+    ]) {
+        assert.equal(carscomSlug(input), expected, `slug for ${input}`);
+    }
+    console.log('[PASS] Cars.com make/model slug rules');
 
     const transport = new StdioClientTransport({
         command: process.execPath,
@@ -113,6 +134,51 @@ async function main() {
         assert.match(text, /Dealer: .+\(\d\.\d stars\)/, 'expected a dealer star rating on at least one listing');
 
         console.log('[PASS] live search_car_deals call returned real Cars.com listings');
+
+        // --- live search with a multi-word make (slug regression) ---
+        // Toyota/Camry above passes even with a broken slug, because a
+        // single-word name survives a plain toLowerCase(). Every search for a
+        // hyphenated make returned zero listings for as long as that was the
+        // only coverage, so pin a name that actually exercises the rules.
+        console.log('[INFO] calling search_car_deals (make: Mercedes-Benz, model: GLE 450) - exercises the slug rules ...');
+        const multiWord = await client.callTool(
+            {
+                name: 'search_car_deals',
+                arguments: {
+                    make: 'Mercedes-Benz',
+                    model: 'GLE 450',
+                    maxResults: 2,
+                    sources: ['cars.com'],
+                },
+            },
+            CallToolResultSchema,
+        );
+        const multiWordText = multiWord.content[0].text;
+        assert.doesNotMatch(multiWordText, /No listings found\./, 'multi-word make returned zero listings - the make/model slug rules are probably broken');
+        assert.match(multiWordText, /Mercedes-Benz GLE 450/, 'expected a Mercedes-Benz GLE 450 listing');
+        console.log('[PASS] multi-word make/model search returned listings');
+
+        // --- unknown model name gets a did-you-mean, not silence ---
+        // "GLE" slugs cleanly but is not a model Cars.com has, so the search
+        // legitimately finds nothing. Without the suggestion block that is
+        // indistinguishable from empty inventory or a bot check.
+        console.log('[INFO] calling search_car_deals with a model name Cars.com does not have ...');
+        const unknown = await client.callTool(
+            {
+                name: 'search_car_deals',
+                arguments: {
+                    make: 'Mercedes-Benz',
+                    model: 'GLE',
+                    maxResults: 2,
+                    sources: ['cars.com'],
+                },
+            },
+            CallToolResultSchema,
+        );
+        const unknownText = unknown.content[0].text;
+        assert.match(unknownText, /has no Mercedes-Benz model named "GLE"/, 'expected a did-you-mean block for an unknown model name');
+        assert.match(unknownText, /- GLE 450/, 'expected GLE 450 among the suggested models');
+        console.log('[PASS] unknown model name returns suggestions from the live filter vocabulary');
 
         // --- host allowlist on the detail tool ---
         const rejected = await client.callTool(

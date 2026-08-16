@@ -84,6 +84,113 @@ class CarListing {
 }
 
 /**
+ * Convert a human-readable make or model name into a Cars.com URL slug.
+ *
+ * Cars.com joins the make and model with a hyphen (`mercedes_benz-gle_450`),
+ * so every separator *inside* a name has to be an underscore instead. The
+ * mapping is mechanical - checked against the site's own filter vocabulary,
+ * all 98 makes and every model they list:
+ *
+ *   space / hyphen / slash -> _   "Mercedes-Benz"     -> mercedes_benz
+ *   & -> and                      "Town & Country"    -> town_and_country
+ *   + -> plus                     "EQE 350+"          -> eqe_350_plus
+ *   apostrophes vanish            "Li'l Red Express"  -> lil_red_express
+ *   a period joining two          "ID.4"              -> id.4
+ *   alphanumerics survives, a     "ID. Buzz"          -> id_buzz
+ *   trailing one separates
+ *
+ * Deriving this beats shipping a lookup table: the vocabulary the page exposes
+ * truncates at 100 models per make, so a harvested list would be incomplete
+ * for exactly the makes people search most.
+ *
+ * Note the failure mode this guards against - Cars.com treats an unrecognized
+ * slug as *no filter at all* and serves a results page with zero cards, which
+ * is indistinguishable from the bot-check variant. A wrong slug therefore
+ * reads as scraping breakage rather than a bad query.
+ */
+function carscomSlug(name) {
+    return String(name)
+        .replace(/&#39;/g, '\'')
+        .replace(/&amp;/g, '&')
+        .trim()
+        .toLowerCase()
+        .replace(/'/g, '')
+        .replace(/&/g, ' and ')
+        .replace(/\+/g, ' plus ')
+        // A period only survives between two alphanumerics, which is what
+        // splits "ID.4" (id.4) from "ID. Buzz" (id_buzz).
+        .replace(/\.(?![a-z0-9])/g, ' ')
+        // Everything that is not alphanumeric or a period becomes a separator.
+        .replace(/[^a-z0-9.]+/g, '_')
+        .replace(/^_+|_+$/g, '');
+}
+
+// Every Cars.com results page embeds its filter vocabulary - makes, models and
+// their inventory counts - in this JSON blob. It is the same data behind the
+// site's own filter panel, so it is authoritative about which names exist.
+const CARSCOM_FILTER_BLOB = 'script#CarsWeb\\.SearchController\\.index';
+
+/**
+ * Read one filter's options ({name, value, count}) out of the embedded blob.
+ * Returns null when the blob is missing, which is the normal case on the
+ * anti-bot interstitial - callers must treat that as "unknown", not "empty".
+ */
+async function readCarscomFilterOptions(page, filterTitle) {
+    return page.evaluate((selector, title) => {
+        const raw = document.querySelector(selector)?.textContent;
+        if (!raw) return null;
+        let data;
+        try {
+            data = JSON.parse(raw);
+        } catch {
+            return null;
+        }
+        for (const section of data?.srp_filters?.sections || []) {
+            for (const item of section.items || []) {
+                if (item.title !== title) continue;
+                // Options arrive grouped (popular vs. all); flatten both shapes.
+                return (item.listing_search_filter?.options || [])
+                    .flatMap(group => group.options || [group])
+                    .filter(opt => opt && opt.value && opt.value !== 'all')
+                    .map(opt => ({ name: opt.name, value: opt.value, count: opt.summary }));
+            }
+        }
+        return null;
+    }, CARSCOM_FILTER_BLOB, filterTitle);
+}
+
+/**
+ * Rank a make's real model names against what the caller asked for.
+ *
+ * This exists because a correct slug is not the same as a valid one: "GLE"
+ * slugs cleanly to `gle`, but Cars.com has no such model - only `gle_350`,
+ * `gle_450`, `gle_class` and friends - so the search silently returns nothing.
+ * Turning that dead end into "did you mean" is the difference between a broken
+ * tool and a narrow miss.
+ */
+function suggestCarscomModels(requested, options, limit = 6) {
+    const want = carscomSlug(requested);
+    if (!want) return [];
+
+    const inventory = (count) => Number(String(count ?? '').replace(/[^\d]/g, '')) || 0;
+
+    return options
+        .map(opt => {
+            const have = carscomSlug(opt.name);
+            let score = 0;
+            if (have === want) score = 100;
+            else if (have.startsWith(`${want}_`)) score = 80;   // gle -> gle_450
+            else if (want.startsWith(`${have}_`)) score = 60;   // gle_450_4matic -> gle_450
+            else if (have.includes(want)) score = 40;           // gle -> amg_gle_63
+            return { ...opt, score };
+        })
+        .filter(opt => opt.score > 0)
+        // Same score - prefer whichever the market actually has more of.
+        .sort((a, b) => b.score - a.score || inventory(b.count) - inventory(a.count))
+        .slice(0, limit);
+}
+
+/**
  * Launch browser with stealth settings
  */
 async function launchBrowser() {
@@ -132,8 +239,13 @@ async function scrapeCarscom(params, maxResults = 20, sendProgress = null) {
         let url = 'https://www.cars.com/shopping/results/?';
         const urlParams = new URLSearchParams();
         urlParams.append('stock_type', 'used');
-        if (params.make) urlParams.append('makes[]', params.make.toLowerCase());
-        if (params.model) urlParams.append('models[]', `${params.make.toLowerCase()}-${params.model.toLowerCase()}`);
+        // See carscomSlug - single-word names (toyota-camry) survive a plain
+        // toLowerCase(), which is why the test suite never caught this.
+        if (params.make) urlParams.append('makes[]', carscomSlug(params.make));
+        // A model filter is only valid alongside its make - the slug embeds it.
+        if (params.make && params.model) {
+            urlParams.append('models[]', `${carscomSlug(params.make)}-${carscomSlug(params.model)}`);
+        }
         if (params.zip) urlParams.append('zip', params.zip);
         if (params.yearMin) urlParams.append('year_min', params.yearMin);
         if (params.yearMax) urlParams.append('year_max', params.yearMax);
@@ -166,6 +278,29 @@ async function scrapeCarscom(params, maxResults = 20, sendProgress = null) {
             rawListings = await extractListings(page);
             logger.debug(`Cars.com attempt ${attempt} extracted ${rawListings.length} raw card(s)`);
             if (rawListings.length > 0) break;
+        }
+
+        // Zero cards is ambiguous: a real empty result, a bot check, or a model
+        // name Cars.com does not have. The filter vocabulary is already on the
+        // page, so ask it which models this make actually offers before giving
+        // up - that distinguishes the third case from the other two.
+        let modelSuggestions = null;
+        if (rawListings.length === 0 && params.make && params.model) {
+            const options = await readCarscomFilterOptions(page, 'Model').catch(err => {
+                logger.debug(`Cars.com filter vocabulary unreadable: ${err.message}`);
+                return null;
+            });
+            if (!options) {
+                logger.debug('Cars.com filter vocabulary absent - likely the bot-check page, not a bad model name');
+            } else {
+                const matches = suggestCarscomModels(params.model, options);
+                logger.debug(`Cars.com lists ${options.length} model(s) for ${params.make}; ${matches.length} resemble "${params.model}"`);
+                const exact = matches.some(m => carscomSlug(m.name) === carscomSlug(params.model));
+                if (matches.length > 0 && !exact) {
+                    modelSuggestions = { make: params.make, input: params.model, options: matches };
+                    logger.info(`Cars.com has no model "${params.model}" for ${params.make} - closest: ${matches.map(m => m.name).join(', ')}`);
+                }
+            }
         }
 
         async function extractListings(page) {
@@ -382,6 +517,12 @@ async function scrapeCarscom(params, maxResults = 20, sendProgress = null) {
                 source: 'Cars.com'
             }));
         }
+
+        // Ride along on the array rather than changing the return type - every
+        // caller (searchAllSources, the test script, ad-hoc scripts) treats a
+        // scraper's result as a plain list of listings, and spreading it drops
+        // this cleanly for the ones that do not care.
+        if (modelSuggestions) listings.modelSuggestions = modelSuggestions;
 
         sendProgress?.(`Cars.com: found ${listings.length} listing(s)`);
         await browser.close();
@@ -882,6 +1023,9 @@ async function searchAllSources(params, maxResultsPerSource = 10, sendProgress =
 
 module.exports = {
     CarListing,
+    // Exported so the URL-building rules can be asserted without a live scrape.
+    carscomSlug,
+    suggestCarscomModels,
     scrapeCarscom,
     scrapeAutotrader,
     scrapeKBB,

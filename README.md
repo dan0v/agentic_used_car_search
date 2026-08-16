@@ -280,6 +280,56 @@ export PUPPETEER_EXECUTABLE_PATH="/path/to/chrome"
 
 ---
 
+## 🪵 Logging & verbose mode
+
+All diagnostics go to **stderr** — stdout is the MCP transport and anything
+written there corrupts the protocol stream.
+
+| Level | What you get |
+|-------|--------------|
+| `silent` | nothing |
+| `error` | failures only |
+| `info` *(default)* | one line per tool call and per scraper outcome |
+| `debug` | request arguments, the built search URL for each site, per-scraper timings, retry attempts, progress-token resolution, and full stack traces |
+| `trace` | everything in `debug`, plus a preview of the response payload |
+
+Set the level with the `CAR_DEALS_LOG_LEVEL` environment variable, or pass
+`--verbose` (equivalent to `debug`) or `--trace` on the command line. The
+environment variable wins when both are given.
+
+```json
+{
+  "mcpServers": {
+    "car-deals": {
+      "command": "npx",
+      "args": ["-y", "github:ejlevin1/car_deals_search_mcp"],
+      "env": {
+        "CAR_DEALS_LOG_LEVEL": "debug"
+      }
+    }
+  }
+}
+```
+
+Running it directly:
+
+```bash
+CAR_DEALS_LOG_LEVEL=debug node src/server.js
+node src/server.js --verbose
+```
+
+Every exception the server hits is written to stderr, including ones that are
+also reported to the client as a tool error, and ones that escape the tool
+handlers entirely. Stack traces (and the `cause` chain that identifies which
+Puppeteer call actually failed) appear at `debug` and above.
+
+> **Note:** the MCP SDK forwards only a fixed subset of environment variables
+> (`HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, `USER`) to a server subprocess.
+> `CAR_DEALS_LOG_LEVEL` therefore has to be set in the client's `env` block as
+> above — exporting it in your shell will not reach a client-launched server.
+
+---
+
 ## 🧪 Development & Testing
 
 ```bash
@@ -288,6 +338,9 @@ npm test
 
 # Test individual scrapers
 node src/scraper.js
+
+# Run the end-to-end MCP test with server-side debug logging
+CAR_DEALS_LOG_LEVEL=debug npm run test:mcp
 
 # View code structure
 ls -la src/

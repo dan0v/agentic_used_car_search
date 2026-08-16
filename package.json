@@ -13,7 +13,7 @@
     "lint": "eslint src test eslint.config.js",
     "lint:fix": "eslint --fix src test eslint.config.js",
     "ec": "editorconfig-checker",
-    "syntax": "node --check src/server.js && node --check src/scraper.js && node --check test/mcp-client.test.js",
+    "syntax": "node --check src/server.js && node --check src/scraper.js && node --check src/logger.js && node --check test/mcp-client.test.js",
     "check": "npm run lint && npm run ec && npm run syntax",
     "build": "npm pack"
   },

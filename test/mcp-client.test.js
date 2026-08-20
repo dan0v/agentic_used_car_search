@@ -65,25 +65,30 @@ async function main() {
         const { tools } = await client.listTools();
         assert.deepEqual(
             tools.map(t => t.name).sort(),
-            ['get_listing_details', 'search_car_deals'],
+            ['check_mot_history', 'get_listing_details', 'search_car_deals'],
             'unexpected tool set',
         );
-        console.log('[PASS] tools discovered: search_car_deals, get_listing_details');
+        console.log('[PASS] tools discovered: search_car_deals, get_listing_details, check_mot_history');
 
         const tool = tools.find(t => t.name === 'search_car_deals');
         const detailTool = tools.find(t => t.name === 'get_listing_details');
+        const motTool = tools.find(t => t.name === 'check_mot_history');
 
         // --- schema shape ---
         const { properties, required } = tool.inputSchema;
         assert.deepEqual(required, ['make', 'model'], 'required params should be make + model');
-        for (const key of ['make', 'model', 'zip', 'maxDistance', 'yearMin', 'yearMax', 'priceMax', 'mileageMax', 'maxResults', 'sources', 'oneOwner', 'noAccidents', 'personalUse']) {
+        for (const key of ['make', 'model', 'country', 'zip', 'maxDistance', 'yearMin', 'yearMax', 'priceMax', 'mileageMax', 'maxResults', 'sources', 'oneOwner', 'noAccidents', 'personalUse']) {
             assert.ok(properties[key], `schema missing property: ${key}`);
         }
+        assert.deepEqual(properties.country.enum, ['US', 'UK'], 'country should be enum of US/UK');
 
         assert.deepEqual(detailTool.inputSchema.required, ['url'], 'get_listing_details should require url');
         for (const key of ['url', 'includeLinks', 'includeImages', 'maxLength']) {
             assert.ok(detailTool.inputSchema.properties[key], `detail schema missing property: ${key}`);
         }
+
+        assert.deepEqual(motTool.inputSchema.required, ['registration'], 'check_mot_history should require registration');
+        assert.ok(motTool.inputSchema.properties.registration, 'check_mot_history schema missing registration property');
         console.log('[PASS] input schemas have all documented parameters');
 
         // --- live search call, with progress notifications ---
@@ -209,6 +214,60 @@ async function main() {
         assert.ok(detailText.length > 3000, `detail markdown suspiciously short (${detailText.length} chars) - likely the bot-check interstitial`);
         assert.match(detailText, /VIN/i, 'expected VIN in the detail markdown');
         console.log(`[PASS] live get_listing_details returned ${detailText.length} chars of listing markdown`);
+
+        // --- live UK search call ---
+        // Exercises the country:UK path, the autotrader-uk default source and
+        // the postcode default. A separate code path from the US scrapers, so
+        // it gets its own assertion - a regression in the UK branch would
+        // otherwise go unnoticed by the Camry/GLE cases above.
+        console.log('[INFO] calling search_car_deals (country: UK, make: Toyota, model: Corolla) - this hits Autotrader UK, may take ~15-25s ...');
+        const ukResult = await client.callTool(
+            {
+                name: 'search_car_deals',
+                arguments: {
+                    make: 'Toyota',
+                    model: 'Corolla',
+                    country: 'UK',
+                    maxResults: 2,
+                },
+            },
+            CallToolResultSchema,
+        );
+        const ukText = ukResult.content[0].text;
+        assert.match(ukText, /\*\*Search:\*\* Toyota Corolla/);
+        assert.match(ukText, /\*\*Location:\*\* SW1A 1AA/, 'UK default postcode should be SW1A 1AA');
+        // Either listings came back or a no-results line; the important thing is
+        // the UK path did not throw. If listings exist, they carry GBP prices.
+        if (!/No listings found\./.test(ukText)) {
+            assert.match(ukText, /Source: Autotrader UK/, 'expected Autotrader UK as the default UK source');
+            assert.match(ukText, /£[\d,]+/, 'expected a GBP price on at least one UK listing');
+            console.log('[PASS] live UK search_car_deals call returned real Autotrader UK listings');
+        } else {
+            console.log('[PASS] live UK search_car_deals call completed (no listings this time - path exercised, no regression)');
+        }
+
+        // --- live MOT history check ---
+        // YL08NNV is a long-standing example registration with a rich MOT
+        // history including a FAIL and an outstanding safety recall, so it
+        // exercises the defect categorisation and the recalls path. The GOV.UK
+        // service sits behind an Imperva bot check, so this can take a while.
+        console.log('[INFO] calling check_mot_history (registration: YL08NNV) - hits GOV.UK behind an Imperva check, may take ~15-45s ...');
+        const motResult = await client.callTool(
+            {
+                name: 'check_mot_history',
+                arguments: { registration: 'YL08 NNV' },
+            },
+            CallToolResultSchema,
+            { onprogress: (p) => console.log(`  [PROGRESS] ${p.message}`) },
+        );
+        assert.equal(motResult.isError, undefined, `MOT call errored: ${JSON.stringify(motResult).slice(0, 400)}`);
+        const motText = motResult.content[0].text;
+        assert.match(motText, /# MOT History:/, 'expected an MOT history heading');
+        assert.match(motText, /\*\*Registration:\*\* YL08NNV/, 'expected the normalised registration in the output');
+        assert.match(motText, /## Outstanding Issues/, 'expected an outstanding-issues section');
+        // The full history accordion should yield multiple tests.
+        assert.match(motText, /## Full MOT History \(\d+ test/, 'expected a full MOT history section with a test count');
+        console.log(`[PASS] live check_mot_history returned MOT record (${motText.length} chars)`);
 
         console.log('\nAll checks passed.');
     } finally {

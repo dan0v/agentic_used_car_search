@@ -1,8 +1,8 @@
 # Car Deals Search MCP
 
-> **Search used car listings from Cars.com, Autotrader, and KBB with AI assistants**
+> **Search used car listings from Cars.com, Autotrader, and KBB (US) or Autotrader UK, Motors.co.uk, and Cinch (UK) with AI assistants — plus UK MOT history checks**
 
-An MCP (Model Context Protocol) server that aggregates and searches car listings from multiple sources. Scrapes listings in parallel, extracts price, mileage, dealer info, and applies optional CARFAX-style filters (1-owner, no accidents, personal use).
+An MCP (Model Context Protocol) server that aggregates and searches car listings from multiple sources across the US and UK. Scrapes listings in parallel, extracts price, mileage, dealer info, and applies optional CARFAX-style filters (1-owner, no accidents, personal use) for US sources. UK listings return title, price (GBP), mileage, and location/distance where available. A dedicated `check_mot_history` tool pulls a UK vehicle's MOT history from the GOV.UK service and surfaces any outstanding defects and safety recalls.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -121,6 +121,23 @@ scrapeCarscom({
   personalUse: true
 }, 5).then(listings => listings.forEach(l => console.log(l.format())));
 "
+
+# Or test a UK search
+node -e "
+const { scrapeAutotraderUK } = require('./src/scraper.js');
+scrapeAutotraderUK({
+  make: 'Toyota',
+  model: 'Corolla',
+  zip: 'SW1A 1AA',
+  priceMax: 15000
+}, 5).then(listings => listings.forEach(l => console.log(l.format())));
+"
+
+# Or test a UK MOT history check
+node -e "
+const { fetchMotHistory } = require('./src/scraper.js');
+fetchMotHistory('YL08 NNV').then(r => console.log(JSON.stringify(r.outstandingIssues, null, 2)));
+"
 ```
 
 If you have [`just`](https://github.com/casey/just) installed, `just --list`
@@ -130,9 +147,11 @@ shows every task (`just check`, `just test`, `just build`, ...).
 
 ## ✨ Features
 
-- **Multi-source aggregation**: Search Cars.com, Autotrader, and KBB simultaneously
-- **Smart filtering**: CARFAX-style filters (1-Owner, No Accidents, Personal Use)
-- **Deal ratings**: Heuristic-based deal quality assessment
+- **Multi-source aggregation**: Search Cars.com, Autotrader, and KBB (US) or Autotrader UK, Motors.co.uk, and Cinch (UK) simultaneously
+- **US & UK support**: Pass `country: "UK"` to search UK marketplaces with a postcode instead of a ZIP code
+- **Smart filtering**: CARFAX-style filters (1-Owner, No Accidents, Personal Use) for US sources
+- **MOT history checks (UK)**: Pull a UK vehicle's full MOT history from GOV.UK and get outstanding dangerous/major/minor defects, advisories, MOT expiry, and active safety recalls
+- **Deal ratings**: Heuristic-based deal quality assessment (US sources)
 - **Parallel scraping**: Fast concurrent queries across sources
 - **Stealth mode**: Puppeteer with anti-bot detection techniques
 
@@ -140,11 +159,21 @@ shows every task (`just check`, `just test`, `just build`, ...).
 
 ## 📊 Supported Sources
 
+### US (`country: "US"`, default)
+
 | Source     | Price | Mileage | Color | VIN / Specs | Deal Rating | Dealer Info | CARFAX Filters |
 |------------|:-----:|:-------:|:-----:|:-----------:|:-----------:|:-----------:|:--------------:|
 | Cars.com   | ✅    | ✅      | ✅    | ✅          | ✅          | ✅          | ✅             |
 | Autotrader | ✅    | ✅      | ❌    | ❌          | ⚠️ Limited   | ✅          | ⚠️ Limited     |
 | KBB        | ✅    | ✅      | ❌    | ❌          | ✅          | ⚠️ Limited   | ⚠️ Limited     |
+
+### UK (`country: "UK"`)
+
+| Source        | Price | Mileage        | Location        | Notes                                            |
+|---------------|:-----:|:--------------:|:---------------:|--------------------------------------------------|
+| Autotrader UK | ✅    | ✅              | ✅              | Default UK source; searched by postcode           |
+| Motors.co.uk  | ✅    | ✅ (approx.)    | ✅ (distance)   | Mileage shown rounded (e.g. "41.2k")             |
+| Cinch         | ✅    | ✅              | ❌              | Nationwide delivery retailer, no postcode/distance |
 
 Cars.com cards embed a `data-vehicle-details` JSON payload, which is where the
 VIN, trim, body style, drivetrain, fuel type, exterior color, dealer identity and
@@ -159,8 +188,9 @@ Two caveats:
   ("Predawn Gray Mica") on the detail page — use
   [`get_listing_details`](#-mcp-tool-get_listing_details) when the exact paint
   name matters. Interior color is detail-page only.
-- Autotrader and KBB cards use different markup and carry no equivalent payload,
-  so their listings return the basics only.
+- Autotrader, KBB and the UK source cards carry no equivalent `data-vehicle-details`
+  payload, so their listings return the basics only. The UK scrapers apply
+  year/price/mileage filters client-side where the site lacks a server-side filter.
 
 ---
 
@@ -172,17 +202,18 @@ Two caveats:
 |--------------|----------|----------|-------------|
 | `make`       | string   | ✅       | Car manufacturer (e.g., "Toyota", "Honda") |
 | `model`      | string   | ✅       | Car model (e.g., "Camry", "Accord") |
-| `zip`        | string   | ❌       | ZIP code for local search (default: "90210") |
-| `maxDistance`| integer  | ❌       | Search radius in miles from the ZIP (e.g. 25, 50, 100, 500). `0` = nationwide. Default: site default (~30-50 mi) |
-| `yearMin`    | integer  | ❌       | Minimum model year |
-| `yearMax`    | integer  | ❌       | Maximum model year |
-| `priceMax`   | integer  | ❌       | Maximum price in USD |
-| `mileageMax` | integer  | ❌       | Maximum mileage |
+| `country`    | string   | ❌       | `"US"` (default; the original and most fully supported scope) or `"UK"`. Selects the default `sources`, default `zip`, and currency |
+| `zip`        | string   | ❌       | Location code. US: ZIP code (default: "90210"). UK: postcode (default: "SW1A 1AA") |
+| `maxDistance`| integer  | ❌       | US only. Search radius in miles from the ZIP (e.g. 25, 50, 100, 500). `0` = nationwide. Default: site default (~30-50 mi). UK sources do not honour this |
+| `yearMin`    | integer  | ❌       | Minimum model year (applied client-side where the source lacks a server-side filter) |
+| `yearMax`    | integer  | ❌       | Maximum model year (applied client-side where the source lacks a server-side filter) |
+| `priceMax`   | integer  | ❌       | Maximum price. US: in USD. UK: in GBP |
+| `mileageMax` | integer  | ❌       | Maximum mileage. Applied client-side for sources that lack a server-side mileage filter (e.g. Motors.co.uk, Cinch) |
 | `maxResults` | integer  | ❌       | Max results per source (default: 10) |
-| `sources`    | array    | ❌       | Sources to query: `["cars.com","autotrader","kbb"]` (default: all) |
-| `oneOwner`   | boolean  | ❌       | Filter for CARFAX 1-owner vehicles only |
-| `noAccidents`| boolean  | ❌       | Filter for no accidents reported |
-| `personalUse`| boolean  | ❌       | Filter for personal use only (not rental/fleet) |
+| `sources`    | array    | ❌       | Sources to query. US: `["cars.com","autotrader","kbb"]`. UK: `["autotrader-uk","motors","cinch"]`. Default: `"cars.com"` (US) or `"autotrader-uk"` (UK) |
+| `oneOwner`   | boolean  | ❌       | US only. Filter for CARFAX 1-owner vehicles. Ignored by UK sources |
+| `noAccidents`| boolean  | ❌       | US only. Filter for no accidents reported. Ignored by UK sources |
+| `personalUse`| boolean  | ❌       | US only. Filter for personal use only (not rental/fleet). Ignored by UK sources |
 
 ### Example Response
 
@@ -203,6 +234,82 @@ Two caveats:
   Photo: https://platform.cstatic-images.com/in/v2/...jpg
   https://www.cars.com/vehicledetail/...
 ```
+
+### Example UK Response
+
+```
+Toyota Corolla 1.8 VVT-h Icon CVT Euro 6 (s/s) 5dr
+  Price: £14,309
+  Mileage: 56,847 miles
+  Location: Available from Portsmouth (62 miles)
+  Source: Autotrader UK
+  https://www.autotrader.co.uk/car-details/...
+```
+
+---
+
+## 🔧 MCP Tool: `check_mot_history` (UK)
+
+UK-only. Checks a UK-registered vehicle's MOT history via the GOV.UK service
+(`check-mot.service.gov.uk`) and surfaces any **outstanding issues** — the most
+recent test result, outstanding dangerous/major/minor defects and advisories,
+the MOT expiry date, and any active safety recalls. Handy before buying a used
+car listed on the UK sources.
+
+The GOV.UK page is server-rendered with stable `data-test-id` attributes (the
+service's own test hooks), so the scraper reads them directly rather than
+fragile class names. The site sits behind an Imperva bot check, so a call can
+take ~15-45s while it clears.
+
+### Parameters
+
+| Parameter       | Type    | Required | Description |
+|-----------------|---------|----------|-------------|
+| `registration`  | string | ✅       | UK vehicle registration (number plate), with or without spaces. e.g. `"YL08 NNV"` or `"YL08NNV"` |
+
+### Example Response (excerpt)
+
+```markdown
+# MOT History: BMW 3 SERIES
+
+**Registration:** YL08NNV
+**Colour:** Silver
+**Fuel:** Petrol
+**First registered:** 24 July 2008
+**MOT valid until:** 17 May 2027
+**Source:** GOV.UK (https://www.check-mot.service.gov.uk/results?registration=YL08NNV)
+
+## Outstanding Issues
+
+**Latest test (18 May 2026):** PASS
+**Mileage at last test:** 62,334 miles
+
+**Major defects (repair immediately):**
+- Offside Front Coil spring fractured or broken (5.3.1 (b) (i))
+**Minor defects (repair soon):**
+- Front Suspension arm ball joint dust cover severely deteriorated n/s & o/s (5.3.4 (b) (i))
+**Advisories (monitor and repair if necessary):**
+- Rear Tyre worn close to legal limit/worn on edge both (5.2.3 (e))
+
+## ⚠️ Safety Recall
+
+This vehicle has been recalled by BMW. Contact your local BMW dealership to arrange a free repair.
+
+No outstanding safety recalls.
+
+## Full MOT History (19 tests)
+
+### 18 May 2026 — PASS
+- Mileage: 62,334 miles
+- Test number: 6469 9395 8456
+- Expiry date: 17 May 2027
+- Advisories:
+  - Rear Tyre worn close to legal limit/worn on edge both (5.2.3 (e))
+  ...
+```
+
+If no MOT record exists for the registration, the tool returns a clear
+"no record" message rather than failing.
 
 ---
 

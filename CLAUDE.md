@@ -34,18 +34,24 @@ Three files. `src/server.js` is the MCP protocol layer; `src/scraper.js` is
 everything Puppeteer; `src/logger.js` is leveled stderr logging that both
 import.
 
-**server.js** — registers two tools on a stdio `Server` from
+**server.js** — registers three tools on a stdio `Server` from
 `@modelcontextprotocol/sdk`, holds no state, and does no parsing. It maps tool
 arguments onto a `params` object, fans out to the selected scrapers with
 `Promise.all`, and concatenates `listing.format()` output into one markdown
 text block. A failing scraper is caught per-source and reported in an
-`**Errors:**` footer rather than failing the call. Note `sources` defaults to
-`['cars.com']` only, despite the schema advertising all three.
+`**Errors:**` footer rather than failing the call. `search_car_deals` defaults
+`sources` to `['cars.com']` (US) or `['autotrader-uk']` (UK) for reliability,
+despite the schema advertising all sources. `country` ("US" default, "UK")
+selects the default source set, default postcode/ZIP and currency; the handler
+is a single `isUK` branch so a future country can be added as another `else if`.
+`check_mot_history` (UK only) drives the GOV.UK MOT service and returns a
+structured record rather than a `CarListing`.
 
 **scraper.js** — one `scrapeX(params, maxResults, sendProgress)` function per
 site, each launching and closing its own browser, plus `fetchListingDetails`
-for the detail-page tool. All normalize into `CarListing`, whose `format()`
-method is the sole definition of the user-visible output shape — change output
+for the detail-page tool and `fetchMotHistory` for the UK MOT-history tool. All
+search scrapers normalize into `CarListing`, whose `format()` method is the
+sole definition of the user-visible search-output shape — change output
 there, not in server.js. `searchAllSources` is exported but unused by the
 server.
 

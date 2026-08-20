@@ -1,12 +1,12 @@
 {
   "mcpVersion": "1.0.0",
-  "id": "SiddarthaKoppaka/car_deals_search_mcp",
+  "id": "dan0v/car_deals_search_mcp",
   "name": "car-deals-search-mcp",
   "displayName": "Car Deals (MCP)",
   "version": "1.0.0",
-  "description": "Search used car listings from Cars.com, Autotrader and KBB. MCP-compatible server.",
-  "author": "SiddarthaKoppaka",
-  "homepage": "https://github.com/SiddarthaKoppaka/car_deals_search_mcp",
+  "description": "Search used car listings from Cars.com, Autotrader and KBB (US) or Autotrader UK, Motors.co.uk and Cinch (UK), plus UK MOT history checks. MCP-compatible server.",
+  "author": "dan0v",
+  "homepage": "https://github.com/dan0v/car_deals_search_mcp",
   "icon": "assets/icon.svg",
   "license": "MIT",
   "entry": {
@@ -30,6 +30,7 @@
     "parameters": {
       "make": { "type": "string", "required": true },
       "model": { "type": "string", "required": true },
+      "country": { "type": "string", "enum": ["US", "UK"] },
       "zip": { "type": "string" },
       "yearMin": { "type": "integer" },
       "yearMax": { "type": "integer" },
@@ -41,5 +42,22 @@
       "noAccidents": { "type": "boolean" },
       "personalUse": { "type": "boolean" }
     }
-  }
+  },
+  "tools": [
+    {
+      "name": "search_car_deals",
+      "description": "Search for car deals across US (Cars.com, Autotrader, KBB) and UK (Autotrader UK, Motors.co.uk, Cinch) sources"
+    },
+    {
+      "name": "get_listing_details",
+      "description": "Fetch a single listing's detail page as markdown"
+    },
+    {
+      "name": "check_mot_history",
+      "description": "UK only. Check a UK vehicle's MOT history via GOV.UK and surface outstanding defects, advisories, MOT expiry, and safety recalls",
+      "parameters": {
+        "registration": { "type": "string", "required": true }
+      }
+    }
+  ]
 }

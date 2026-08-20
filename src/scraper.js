@@ -758,6 +758,558 @@ async function scrapeKBB(params, maxResults = 20, sendProgress = null) {
 }
 
 /**
+ * Accept a Sourcepoint/OneTrust-style cookie consent banner if one is shown.
+ * UK sites almost always gate the results behind one on first visit, and the
+ * banner can sit in a consent iframe rather than the top page, so both are
+ * checked. A missing banner is the normal case on a repeat visit - the swallow
+ * is intentional.
+ */
+async function acceptConsent(page, selectors) {
+    try {
+        for (const sel of selectors) {
+            const btn = await page.$(sel);
+            if (btn) {
+                await btn.click();
+                return;
+            }
+        }
+        for (const frame of page.frames()) {
+            for (const sel of selectors) {
+                const btn = await frame.$(sel).catch(() => null);
+                if (btn) {
+                    await btn.click();
+                    return;
+                }
+            }
+        }
+    } catch {
+        // Consent banner not present or already dismissed - safe to continue.
+    }
+}
+
+/**
+ * Parse a displayed price string into a comparable number. UK prices carry a
+ * pound sign and thousands separators (`£17,110`); the digit strip handles both
+ * currencies, so the same helper works for `$` and `£`.
+ */
+function parsePrice(str) {
+    if (!str) return null;
+    const digits = str.replace(/[^\d]/g, '');
+    return digits ? parseInt(digits, 10) : null;
+}
+
+/**
+ * Parse a displayed mileage string. Motors.co.uk rounds to a "41.2k" form; the
+ * other sources spell it out (`68,148 miles`). Both shapes are handled here.
+ */
+function parseMileage(str) {
+    if (!str) return null;
+    const kMatch = str.match(/([\d.]+)\s*k/i);
+    if (kMatch) return Math.round(parseFloat(kMatch[1]) * 1000);
+    const digits = str.replace(/[^\d]/g, '');
+    return digits ? parseInt(digits, 10) : null;
+}
+
+function parseYear(str) {
+    if (!str) return null;
+    const match = str.match(/(19|20)\d{2}/);
+    return match ? parseInt(match[0], 10) : null;
+}
+
+/**
+ * Apply yearMin/yearMax/priceMax/mileageMax filters client-side. The UK sources
+ * do not reliably accept every filter as a URL/search parameter (Motors.co.uk
+ * has no mileage filter, Cinch has neither postcode nor mileage), so what the
+ * site cannot narrow down is narrowed here.
+ */
+function applyUkFilters(rawListings, params) {
+    return rawListings.filter(item => {
+        const year = parseYear(item.year);
+        if (params.yearMin && year && year < params.yearMin) return false;
+        if (params.yearMax && year && year > params.yearMax) return false;
+
+        const price = parsePrice(item.price);
+        if (params.priceMax && price && price > params.priceMax) return false;
+
+        const mileage = parseMileage(item.mileage);
+        if (params.mileageMax && mileage && mileage > params.mileageMax) return false;
+
+        return true;
+    });
+}
+
+/**
+ * Scrape Autotrader UK (autotrader.co.uk) for car listings.
+ *
+ * The default UK source and the most fully supported: it returns title, price,
+ * mileage, year and a location/distance line, scoped to a postcode. Autotrader
+ * UK gates results behind a Sourcepoint consent banner on first visit, which
+ * `acceptConsent` dismisses before the cards are read.
+ */
+async function scrapeAutotraderUK(params, maxResults = 20, sendProgress = null) {
+    const listings = [];
+    let browser;
+    const stopHeartbeat = startHeartbeat(sendProgress, 'Searching Autotrader UK');
+
+    try {
+        browser = await launchBrowser();
+        const page = await browser.newPage();
+        await page.setViewport({ width: 1920, height: 1080 });
+
+        // Postcode is sent with whitespace stripped; the site tolerates either
+        // form but the compact form is what its own search uses.
+        const postcode = (params.zip || 'SW1A1AA').replace(/\s+/g, '');
+        const urlParams = new URLSearchParams();
+        urlParams.append('postcode', postcode);
+        if (params.make) urlParams.append('make', params.make);
+        if (params.model) urlParams.append('model', params.model);
+        if (params.yearMin) urlParams.append('year-from', params.yearMin);
+        if (params.yearMax) urlParams.append('year-to', params.yearMax);
+        if (params.priceMax) urlParams.append('price-to', params.priceMax);
+        if (params.mileageMax) urlParams.append('maximum-mileage', params.mileageMax);
+
+        const url = `https://www.autotrader.co.uk/car-search?${urlParams.toString()}`;
+        logger.debug(`Autotrader UK search URL: ${url}`);
+
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        await new Promise(r => setTimeout(r, 3000));
+        await acceptConsent(page, ['button[title="Accept All"]', 'button[aria-label="Accept All"]']);
+        await new Promise(r => setTimeout(r, 4000));
+
+        const rawListings = await page.evaluate(() => {
+            const results = [];
+            const cards = document.querySelectorAll('[data-testid^="advertCard-"]');
+
+            cards.forEach(card => {
+                const titleEl = card.querySelector('[data-testid="search-listing-title"]');
+                if (!titleEl) return;
+
+                const title = titleEl.childNodes[0] ? titleEl.childNodes[0].textContent.trim() : null;
+                if (!title) return;
+
+                const subtitleEl = card.querySelector('[data-testid="search-listing-subtitle"]');
+                const mileageEl = card.querySelector('[data-testid="mileage"]');
+                const yearEl = card.querySelector('[data-testid="registered_year"]');
+                const locationEl = card.querySelector('[data-testid="search-listing-location"]');
+                const priceMatch = card.innerText.match(/£[\d,]+/);
+
+                results.push({
+                    title: subtitleEl ? `${title} ${subtitleEl.innerText.trim()}` : title,
+                    price: priceMatch ? priceMatch[0] : null,
+                    mileage: mileageEl ? mileageEl.innerText.trim() : null,
+                    year: yearEl ? yearEl.innerText.trim() : null,
+                    location: locationEl ? locationEl.innerText.trim() : null,
+                    href: titleEl.getAttribute('href'),
+                });
+            });
+
+            return results;
+        });
+
+        const filtered = applyUkFilters(rawListings, params);
+        for (const item of filtered.slice(0, maxResults)) {
+            listings.push(new CarListing({
+                title: item.title,
+                price: item.price,
+                mileage: item.mileage,
+                location: item.location,
+                url: item.href ? `https://www.autotrader.co.uk${item.href}` : null,
+                source: 'Autotrader UK'
+            }));
+        }
+
+        sendProgress?.(`Autotrader UK: found ${listings.length} listing(s)`);
+        await browser.close();
+    } catch (err) {
+        if (browser) await browser.close();
+        throw new Error(`Autotrader UK scraping failed: ${err.message}`, { cause: err });
+    } finally {
+        stopHeartbeat();
+    }
+
+    return listings;
+}
+
+/**
+ * Scrape Motors.co.uk for car listings.
+ *
+ * Returns title, price, mileage and a distance line, scoped to a postcode.
+ * Mileage on Motors.co.uk is shown rounded ("41.2k"), which `parseMileage`
+ * expands; the site has no server-side mileage filter, so mileageMax is
+ * applied client-side via `applyUkFilters`. A OneTrust consent banner is
+ * dismissed before the cards are read.
+ */
+async function scrapeMotorsUK(params, maxResults = 20, sendProgress = null) {
+    const listings = [];
+    let browser;
+    const stopHeartbeat = startHeartbeat(sendProgress, 'Searching Motors.co.uk');
+
+    try {
+        browser = await launchBrowser();
+        const page = await browser.newPage();
+        await page.setViewport({ width: 1920, height: 1080 });
+
+        const postcode = (params.zip || 'SW1A1AA').replace(/\s+/g, '');
+        const urlParams = new URLSearchParams();
+        if (params.make) urlParams.append('make', params.make);
+        if (params.model) urlParams.append('model', params.model);
+        urlParams.append('postcode', postcode);
+        if (params.yearMin) urlParams.append('MinYear', params.yearMin);
+        if (params.yearMax) urlParams.append('MaxYear', params.yearMax);
+        if (params.priceMax) urlParams.append('MaxPrice', params.priceMax);
+
+        const url = `https://www.motors.co.uk/search/car/?${urlParams.toString()}`;
+        logger.debug(`Motors.co.uk search URL: ${url}`);
+
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        await new Promise(r => setTimeout(r, 3000));
+        await acceptConsent(page, ['#onetrust-accept-btn-handler']);
+        await new Promise(r => setTimeout(r, 4000));
+
+        const rawListings = await page.evaluate(() => {
+            const results = [];
+            const cards = document.querySelectorAll('.result-card');
+
+            cards.forEach(card => {
+                const titleEl = card.querySelector('.result-card__header h3');
+                if (!titleEl) return;
+
+                const title = titleEl.innerText.trim().replace(',', '');
+                const subtitleEl = card.querySelector('.result-card__header h4');
+                const linkEl = card.querySelector('.result-card__link');
+
+                const text = card.innerText;
+                const priceMatch = text.match(/£[\d,]+/);
+                const mileageMatch = text.match(/(\d+(?:\.\d+)?k)\s*\n\s*Miles/i);
+                const distanceMatch = text.match(/\d+\s*miles away/i);
+
+                if (title) {
+                    results.push({
+                        title: subtitleEl ? `${title} ${subtitleEl.innerText.trim()}` : title,
+                        price: priceMatch ? priceMatch[0] : null,
+                        mileage: mileageMatch ? mileageMatch[1] : null,
+                        year: subtitleEl ? subtitleEl.innerText.trim() : null,
+                        location: distanceMatch ? distanceMatch[0] : null,
+                        href: linkEl ? linkEl.getAttribute('href') : null,
+                    });
+                }
+            });
+
+            return results;
+        });
+
+        const filtered = applyUkFilters(rawListings, params);
+        for (const item of filtered.slice(0, maxResults)) {
+            listings.push(new CarListing({
+                title: item.title,
+                price: item.price,
+                mileage: item.mileage,
+                location: item.location,
+                url: item.href ? `https://www.motors.co.uk${item.href}` : null,
+                source: 'Motors.co.uk'
+            }));
+        }
+
+        sendProgress?.(`Motors.co.uk: found ${listings.length} listing(s)`);
+        await browser.close();
+    } catch (err) {
+        if (browser) await browser.close();
+        throw new Error(`Motors.co.uk scraping failed: ${err.message}`, { cause: err });
+    } finally {
+        stopHeartbeat();
+    }
+
+    return listings;
+}
+
+/**
+ * Scrape Cinch (cinch.co.uk) for car listings.
+ *
+ * Cinch is a nationwide UK used-car retailer with home delivery, so its
+ * listings are not scoped to a postcode or dealer distance the way the other
+ * UK sources are - there is no location/distance field, and neither postcode
+ * nor mileageMax filters apply server-side. Year and price filters are applied
+ * client-side via `applyUkFilters`.
+ */
+async function scrapeCinch(params, maxResults = 20, sendProgress = null) {
+    const listings = [];
+    let browser;
+    const stopHeartbeat = startHeartbeat(sendProgress, 'Searching Cinch');
+
+    try {
+        browser = await launchBrowser();
+        const page = await browser.newPage();
+        await page.setViewport({ width: 1920, height: 1080 });
+
+        const slugify = s => s.toLowerCase().trim().replace(/\s+/g, '-');
+        const make = params.make ? slugify(params.make) : '';
+        const model = params.model ? slugify(params.model) : '';
+
+        let url = 'https://www.cinch.co.uk/used-cars';
+        if (make) url += `/${make}`;
+        if (model) url += `/${model}`;
+        logger.debug(`Cinch search URL: ${url}`);
+
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        await new Promise(r => setTimeout(r, 5000));
+
+        const rawListings = await page.evaluate(() => {
+            const results = [];
+            const cards = document.querySelectorAll('li:has(a[data-testid="product-list-card-link"])');
+
+            cards.forEach(card => {
+                const linkEl = card.querySelector('a[data-testid="product-list-card-link"]');
+                if (!linkEl) return;
+
+                const lines = card.innerText.split('\n').map(l => l.trim()).filter(Boolean);
+                const title = lines[0] || null;
+                const subtitle = lines[1] || null;
+
+                // Cinch labels each value with a heading line followed by the
+                // value on the next line ("Mileage," / "41,234"), so locate each
+                // field by its label and take what follows it.
+                const findAfter = label => {
+                    const idx = lines.indexOf(label);
+                    return idx >= 0 ? lines[idx + 1] : null;
+                };
+
+                if (title) {
+                    results.push({
+                        title: subtitle ? `${title} ${subtitle}` : title,
+                        price: findAfter('Full price.'),
+                        mileage: findAfter('Mileage,'),
+                        year: findAfter('Vehicle year,'),
+                        href: linkEl.getAttribute('href'),
+                    });
+                }
+            });
+
+            return results;
+        });
+
+        const filtered = applyUkFilters(rawListings, params);
+        for (const item of filtered.slice(0, maxResults)) {
+            listings.push(new CarListing({
+                title: item.title,
+                price: item.price,
+                mileage: item.mileage,
+                url: item.href ? `https://www.cinch.co.uk${item.href}` : null,
+                source: 'Cinch'
+            }));
+        }
+
+        sendProgress?.(`Cinch: found ${listings.length} listing(s)`);
+        await browser.close();
+    } catch (err) {
+        if (browser) await browser.close();
+        throw new Error(`Cinch scraping failed: ${err.message}`, { cause: err });
+    } finally {
+        stopHeartbeat();
+    }
+
+    return listings;
+}
+
+/**
+ * The GOV.UK MOT history host. The MOT service is fronted by an Imperva
+ * (Incapsula) bot check that serves a "Pardon Our Interruption" interstitial to
+ * anything it clocks as automated; the stealth plugin gets past it most of the
+ * time, and `waitOutInterstitial` covers the remainder. The host is pinned
+ * rather than taking a caller-supplied URL because the service is the only
+ * legitimate source of this data and a wrong host would be a credential-free
+ * proxy to an arbitrary site.
+ */
+const MOT_HOST = 'www.check-mot.service.gov.uk';
+
+/**
+ * Normalise a UK registration. The MOT service accepts either spaced
+ * ("YL08 NNV") or compact ("YL08NNV") form and the URL uses the compact form;
+ * spaces and lowercase are tolerated but stripped here so the logged URL is
+ * predictable.
+ */
+function normaliseRegistration(reg) {
+    return String(reg || '').trim().toUpperCase().replace(/\s+/g, '');
+}
+
+/**
+ * Fetch a UK vehicle's MOT history from the GOV.UK service and return the
+ * structured record: vehicle identity, MOT expiry, the full test history with
+ * per-test defects categorised by severity, and any outstanding safety recalls.
+ *
+ * The page is server-rendered with stable GOV.UK `data-test-id` attributes, so
+ * unlike the dealer sites there is no fragility to a class-name reshuffle -
+ * these attributes are the service's own test hooks and change far less often
+ * than dealer markup. The recalls block is rendered server-side too, so one
+ * page load captures everything (no XHR to wait for).
+ */
+async function fetchMotHistory(registration, sendProgress = null) {
+    const reg = normaliseRegistration(registration);
+    if (!reg) {
+        throw new Error('A vehicle registration is required to check MOT history');
+    }
+
+    const url = `https://${MOT_HOST}/results?registration=${encodeURIComponent(reg)}`;
+    let browser;
+    logger.debug(`MOT history fetch: ${url}`);
+    const stopHeartbeat = startHeartbeat(sendProgress, 'Checking MOT history');
+
+    try {
+        browser = await launchBrowser();
+        const page = await browser.newPage();
+        await page.setViewport({ width: 1920, height: 1080 });
+
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
+
+        // The MOT service sits behind an Imperva interstitial ("Pardon Our
+        // Interruption") more often than not for automated traffic. It clears
+        // itself and reloads the real page after a few seconds, so poll rather
+        // than treating the challenge as the answer. The standard interstitial
+        // pattern covers the "verifying you are human" wording this site uses.
+        const cleared = await waitOutInterstitial(page, sendProgress);
+        if (!cleared) {
+            logger.error('MOT service bot-check interstitial did not clear within 45s - extracted content is probably the challenge page, not the MOT history');
+        }
+
+        // The real results page is identifiable by the vehicle heading; the
+        // interstitial and a "no record" result both lack it. A short settle
+        // covers the GOV.UK accordion's paint before reading.
+        await page.waitForSelector('[data-test-id="vehicle-make-model"]', { timeout: 15000 })
+            .catch(() => logger.debug('MOT vehicle-make-model heading never appeared - registration may be unknown or the page is the interstitial'));
+        await new Promise(r => setTimeout(r, 1500));
+
+        sendProgress?.('Extracting MOT history...');
+
+        const record = await page.evaluate(() => {
+            const text = (sel) => {
+                const el = document.querySelector(sel);
+                return el ? el.innerText.trim() : null;
+            };
+
+            // A registration the service has no record for lands on a page with
+            // no vehicle heading; detect that explicitly so the caller can tell
+            // "no data for this plate" apart from a scrape failure.
+            const makeModel = text('[data-test-id="vehicle-make-model"]');
+            if (!makeModel) {
+                return { found: false };
+            }
+
+            const vehicle = {
+                registration: (text('[data-test-id="vehicle-registration"]') || '').replace(/\s+/g, ''),
+                makeModel,
+                colour: text('[data-test-id="vehicle-colour"]'),
+                fuelType: text('[data-test-id="vehicle-fuel-type"]'),
+                dateRegistered: text('[data-test-id="vehicle-date-registered"]'),
+                motExpiry: text('[data-test-id="mot-due-date"]')
+            };
+
+            // Each test is a [data-test-id="test-history-item"] row. Defects
+            // for a test sit in the same row under labelled bullet lists; the
+            // four severity headings are bounded literals (the service's own
+            // wording) rather than a catch-all - a loose pattern would sweep up
+            // the definition <details> text below each list.
+            const tests = [];
+            const testRows = document.querySelectorAll('[data-test-id="test-history-item"]');
+            testRows.forEach(row => {
+                const read = (sel) => {
+                    const el = row.querySelector(sel);
+                    return el ? el.innerText.trim() : null;
+                };
+                // The date has no data-test-id of its own; it is the first
+                // .govuk-heading-s inside the date/result column. Scope to the
+                // column to avoid matching the test-number heading below.
+                const dateCol = row.querySelector('.govuk-grid-column-one-third');
+                const dateEl = dateCol ? dateCol.querySelector('.govuk-heading-s') : null;
+
+                // Defects are grouped under labelled bullet lists. Each heading's
+                // parentElement is the wrapper div; the <ul> is its sibling/child.
+                const collect = (headingSel) => {
+                    const heading = row.querySelector(headingSel);
+                    if (!heading) return [];
+                    const wrapper = heading.parentElement;
+                    const list = wrapper ? wrapper.querySelector('ul.govuk-list--bullet, ul') : null;
+                    if (!list) return [];
+                    return Array.from(list.querySelectorAll('li'))
+                        .map(li => li.innerText.trim())
+                        .filter(Boolean);
+                };
+
+                tests.push({
+                    date: dateEl ? dateEl.innerText.trim() : null,
+                    result: read('[data-test-id="test-result"]'),
+                    mileage: read('[data-test-id="test-history-odometer"]'),
+                    testNumber: read('[data-test-id="test-number"]'),
+                    expiryDate: read('[data-test-id="expiry-date"]'),
+                    dangerous: collect('[data-test-id="dangerous-defect-items-heading"]'),
+                    major: collect('[data-test-id="major-defect-items-heading"]'),
+                    minor: collect('[data-test-id="minor-defect-items-heading"]'),
+                    advisories: collect('[data-test-id="advisory-defect-comments-heading"]')
+                });
+            });
+
+            // The recalls section is rendered server-side (data-test-status
+            // "loaded") for vehicles with an active recall, and absent for
+            // vehicles with none. The inset text carries the manufacturer and
+            // the "arrange a free repair" instruction.
+            const recalls = [];
+            const recallBlock = document.querySelector('[data-test-id="recall-success-results"]');
+            if (recallBlock) {
+                const inset = recallBlock.querySelector('.govuk-inset-text');
+                if (inset) {
+                    recalls.push(inset.innerText.trim().replace(/\s+/g, ' '));
+                }
+            }
+
+            return { found: true, vehicle, tests, recalls };
+        });
+
+        await browser.close();
+        browser = null;
+
+        if (!record.found) {
+            logger.info(`MOT history: no record for registration "${reg}"`);
+            sendProgress?.('No MOT record found for that registration');
+            return { registration: reg, found: false, url };
+        }
+
+        // A condensed "outstanding issues" view is the useful part for a car
+        // buyer: the most recent test, whether it failed, the worst open
+        // defects, and any live safety recall.
+        const latest = record.tests[0] || null;
+        const openDefects = latest
+            ? [...(latest.dangerous || []), ...(latest.major || []), ...(latest.minor || []), ...(latest.advisories || [])]
+            : [];
+        const hasRecall = (record.recalls || []).length > 0;
+
+        sendProgress?.(`MOT history: ${record.tests.length} test(s), latest ${latest ? latest.result : 'none'}${hasRecall ? ', outstanding recall' : ''}`);
+
+        return {
+            registration: reg,
+            found: true,
+            url,
+            vehicle: record.vehicle,
+            motExpiry: record.vehicle.motExpiry,
+            tests: record.tests,
+            recalls: record.recalls || [],
+            latestTest: latest,
+            outstandingIssues: {
+                latestResult: latest ? latest.result : null,
+                dangerous: (latest && latest.dangerous) || [],
+                major: (latest && latest.major) || [],
+                minor: (latest && latest.minor) || [],
+                advisories: (latest && latest.advisories) || [],
+                openDefectCount: openDefects.length,
+                hasOutstandingRecall: hasRecall
+            }
+        };
+    } catch (err) {
+        throw new Error(`MOT history check failed: ${err.message}`, { cause: err });
+    } finally {
+        if (browser) await browser.close().catch(() => {});
+        stopHeartbeat();
+    }
+}
+
+/**
  * Hosts a detail page may be fetched from. The tool takes a caller-supplied
  * URL and drives a real browser at it, so the host is checked against this
  * list first - otherwise the tool is an open fetch proxy pointed at whatever
@@ -1029,6 +1581,11 @@ module.exports = {
     scrapeCarscom,
     scrapeAutotrader,
     scrapeKBB,
+    scrapeAutotraderUK,
+    scrapeMotorsUK,
+    scrapeCinch,
     searchAllSources,
-    fetchListingDetails
+    fetchListingDetails,
+    fetchMotHistory,
+    normaliseRegistration
 };

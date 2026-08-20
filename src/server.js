@@ -13,7 +13,7 @@ const {
     ListToolsRequestSchema,
 } = require('@modelcontextprotocol/sdk/types.js');
 
-const { scrapeCarscom, scrapeAutotrader, scrapeKBB, fetchListingDetails } = require('./scraper.js');
+const { scrapeCarscom, scrapeAutotrader, scrapeKBB, scrapeAutotraderUK, scrapeMotorsUK, scrapeCinch, fetchListingDetails, fetchMotHistory } = require('./scraper.js');
 const { logger, installGlobalHandlers } = require('./logger.js');
 
 installGlobalHandlers();
@@ -75,7 +75,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         tools: [
             {
                 name: 'search_car_deals',
-                description: 'Search for car deals across multiple sources (Cars.com, Autotrader, KBB). Cars.com listings return price (with any price drop), estimated monthly payment, mileage, exterior color, trim, body style, drivetrain, fuel type, VIN, deal rating, Certified Pre-Owned and CARFAX badges, dealer name and star rating, location and distance, a photo, and a link. Use get_listing_details on a listing URL for the full options and features list.',
+                description: 'Search for car deals across multiple sources. US sources (Cars.com, Autotrader, KBB) return price (with any price drop), estimated monthly payment, mileage, exterior color, trim, body style, drivetrain, fuel type, VIN, deal rating, Certified Pre-Owned and CARFAX badges, dealer name and star rating, location and distance, a photo, and a link. UK sources (Autotrader UK, Motors.co.uk, Cinch) return title, price (GBP), mileage, and location/distance where available. Use get_listing_details on a listing URL for the full options and features list.',
                 inputSchema: {
                     type: 'object',
                     properties: {
@@ -87,29 +87,34 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                             type: 'string',
                             description: 'Car model (e.g., Camry, Civic, F-150)',
                         },
+                        country: {
+                            type: 'string',
+                            enum: ['US', 'UK'],
+                            description: 'Country to search in. "US" (default; the original and most fully supported scope) searches Cars.com, Autotrader, KBB; "UK" searches Autotrader UK, Motors.co.uk, Cinch. Selects the default `sources`, the default `zip`, and the currency shown. Add new entries here alongside matching per-country scrapers and source defaults to support further regions.',
+                        },
                         zip: {
                             type: 'string',
-                            description: 'ZIP code for location-based search (default: 90210)',
+                            description: 'Location-based search code. US: a ZIP code (default: 90210). UK: a postcode (default: SW1A 1AA).',
                         },
                         maxDistance: {
                             type: 'integer',
-                            description: 'Search radius in miles from the ZIP code (e.g. 25, 50, 100, 500). Use 0 for nationwide. Default: the site default, roughly 30-50 miles',
+                            description: 'US only. Search radius in miles from the ZIP code (e.g. 25, 50, 100, 500). Use 0 for nationwide. Default: the site default, roughly 30-50 miles. UK sources do not honour this.',
                         },
                         yearMin: {
                             type: 'integer',
-                            description: 'Minimum model year',
+                            description: 'Minimum model year (applied server-side where supported, otherwise client-side)',
                         },
                         yearMax: {
                             type: 'integer',
-                            description: 'Maximum model year',
+                            description: 'Maximum model year (applied server-side where supported, otherwise client-side)',
                         },
                         priceMax: {
                             type: 'integer',
-                            description: 'Maximum price in dollars',
+                            description: 'Maximum price. US: in USD. UK: in GBP.',
                         },
                         mileageMax: {
                             type: 'integer',
-                            description: 'Maximum mileage',
+                            description: 'Maximum mileage. Applied client-side for sources that lack a server-side mileage filter (e.g. Motors.co.uk, Cinch).',
                         },
                         maxResults: {
                             type: 'integer',
@@ -118,19 +123,19 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         sources: {
                             type: 'array',
                             items: { type: 'string' },
-                            description: 'Sources to search: "cars.com", "autotrader", "kbb". Default: all',
+                            description: 'Sources to search. US: "cars.com", "autotrader", "kbb". UK: "autotrader-uk", "motors", "cinch". Default: "cars.com" (US) or "autotrader-uk" (UK).',
                         },
                         oneOwner: {
                             type: 'boolean',
-                            description: 'Filter for CARFAX 1-Owner vehicles only',
+                            description: 'US only. Filter for CARFAX 1-Owner vehicles. Ignored by UK sources.',
                         },
                         noAccidents: {
                             type: 'boolean',
-                            description: 'Filter for vehicles with no accidents or damage reported',
+                            description: 'US only. Filter for vehicles with no accidents or damage reported. Ignored by UK sources.',
                         },
                         personalUse: {
                             type: 'boolean',
-                            description: 'Filter for vehicles used for personal use only (not rental/fleet)',
+                            description: 'US only. Filter for vehicles used for personal use only (not rental/fleet). Ignored by UK sources.',
                         },
                     },
                     required: ['make', 'model'],
@@ -160,6 +165,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         },
                     },
                     required: ['url'],
+                },
+            },
+            {
+                name: 'check_mot_history',
+                description: 'UK only. Check the MOT history of a UK-registered vehicle via the GOV.UK service (check-mot.service.gov.uk) and surface any outstanding issues: the most recent test result, outstanding dangerous/major/minor defects and advisories, the MOT expiry date, and any active safety recalls. Useful before buying a used car listed on the UK sources. Takes a UK registration (number plate), e.g. "YL08 NNV" or "YL08NNV".',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        registration: {
+                            type: 'string',
+                            description: 'UK vehicle registration (number plate), with or without spaces. e.g. "YL08 NNV" or "YL08NNV"',
+                        },
+                    },
+                    required: ['registration'],
                 },
             },
         ],
@@ -199,25 +218,39 @@ server.setRequestHandler(CallToolRequestSchema, logToolFailures(async (request) 
 
     if (name === 'search_car_deals') {
         try {
+            // `country` selects the default source set, the default postcode/ZIP
+            // and the currency symbol shown in the response header. "US" is the
+            // original and most fully supported scope (richer card data, CARFAX
+            // history filters, maxDistance); "UK" is the first added region.
+            // The structure is intentionally a single isUK branch so a future
+            // country can be added as another `else if` with its own defaults
+            // and scraper fan-out, rather than reworking the handler.
+            const country = (args.country || 'US').toUpperCase();
+            const isUK = country === 'UK';
             const params = {
                 make: args.make,
                 model: args.model,
-                zip: args.zip || '90210',
+                country,
+                zip: args.zip || (isUK ? 'SW1A 1AA' : '90210'),
                 maxDistance: args.maxDistance,
                 yearMin: args.yearMin,
                 yearMax: args.yearMax,
                 priceMax: args.priceMax,
                 mileageMax: args.mileageMax,
-                // CarFax history filters
+                // CarFax history filters (US only; UK sources ignore these)
                 oneOwner: args.oneOwner,
                 noAccidents: args.noAccidents,
                 personalUse: args.personalUse,
             };
             const maxResults = args.maxResults || 10;
-            // Default to just cars.com for reliability
-            const sources = args.sources || ['cars.com'];
+            // Default to a single source per country for reliability: cars.com
+            // for US, autotrader-uk for UK. Mirrors the original per-country
+            // default rather than fanning out to every source.
+            const defaultSources = isUK ? ['autotrader-uk'] : ['cars.com'];
+            const sources = args.sources || defaultSources;
+            const currencySymbol = isUK ? '£' : '$';
 
-            logger.info(`Searching for ${params.make} ${params.model} in ${params.zip}`);
+            logger.info(`Searching for ${params.make} ${params.model} in ${params.zip} (${country})`);
             logger.info(`Sources: ${sources.join(', ')}, Max: ${maxResults}`);
             logger.debug(`Resolved params: ${logger.preview(params)}`);
             sendProgress?.(`Searching ${sources.join(', ')} for ${params.make} ${params.model}...`);
@@ -251,6 +284,9 @@ server.setRequestHandler(CallToolRequestSchema, logToolFailures(async (request) 
             if (sources.includes('cars.com')) scraperPromises.push(runScraper('Cars.com', scrapeCarscom));
             if (sources.includes('autotrader')) scraperPromises.push(runScraper('Autotrader', scrapeAutotrader));
             if (sources.includes('kbb')) scraperPromises.push(runScraper('KBB', scrapeKBB));
+            if (sources.includes('autotrader-uk')) scraperPromises.push(runScraper('Autotrader UK', scrapeAutotraderUK));
+            if (sources.includes('motors')) scraperPromises.push(runScraper('Motors.co.uk', scrapeMotorsUK));
+            if (sources.includes('cinch')) scraperPromises.push(runScraper('Cinch', scrapeCinch));
 
             if (scraperPromises.length === 0) {
                 logger.error(`No known sources selected (got: ${logger.preview(sources)})`);
@@ -280,7 +316,7 @@ server.setRequestHandler(CallToolRequestSchema, logToolFailures(async (request) 
             if (params.yearMin || params.yearMax) {
                 output += ` (${params.yearMin || 'any'}-${params.yearMax || 'any'})`;
             }
-            if (params.priceMax) output += ` | Max Price: $${params.priceMax.toLocaleString()}`;
+            if (params.priceMax) output += ` | Max Price: ${currencySymbol}${params.priceMax.toLocaleString()}`;
             if (params.mileageMax) output += ` | Max Mileage: ${params.mileageMax.toLocaleString()}`;
 
             // Show active CarFax filters
@@ -392,6 +428,115 @@ server.setRequestHandler(CallToolRequestSchema, logToolFailures(async (request) 
                     {
                         type: 'text',
                         text: `Error fetching listing details: ${error.message}`,
+                    },
+                ],
+                isError: true,
+            };
+        }
+    }
+
+    if (name === 'check_mot_history') {
+        try {
+            logger.info(`Checking MOT history for ${args.registration}`);
+            sendProgress?.(`Checking MOT history for ${args.registration}...`);
+
+            const record = await fetchMotHistory(args.registration, sendProgress);
+
+            if (!record.found) {
+                logger.info(`No MOT record found for ${args.registration}`);
+                return {
+                    content: [
+                        {
+                            type: 'text',
+                            text: `No MOT record was found for registration "${args.registration}".\n\nThe vehicle may be unregistered, too new to have an MOT, or the registration may be mistyped.\n\nCheck directly: ${record.url}`,
+                        },
+                    ],
+                };
+            }
+
+            const v = record.vehicle;
+            const latest = record.latestTest;
+            const issues = record.outstandingIssues;
+
+            let output = `# MOT History: ${v.makeModel || args.registration}\n\n`;
+            output += `**Registration:** ${v.registration || args.registration}\n`;
+            if (v.colour) output += `**Colour:** ${v.colour}\n`;
+            if (v.fuelType) output += `**Fuel:** ${v.fuelType}\n`;
+            if (v.dateRegistered) output += `**First registered:** ${v.dateRegistered}\n`;
+            if (record.motExpiry) output += `**MOT valid until:** ${record.motExpiry}\n`;
+            output += `**Source:** GOV.UK (${record.url})\n\n`;
+
+            // The outstanding-issues summary is the part a buyer actually wants
+            // at the top; the full history follows for reference.
+            output += `## Outstanding Issues\n\n`;
+            if (latest) {
+                const resultBadge = String(latest.result).toUpperCase() === 'PASS' ? 'PASS' : 'FAIL';
+                output += `**Latest test (${latest.date}):** ${resultBadge}\n`;
+                if (latest.mileage) output += `**Mileage at last test:** ${latest.mileage}\n`;
+            } else {
+                output += `**Latest test:** none on record\n`;
+            }
+
+            const hasOpenDefects = issues.dangerous.length + issues.major.length + issues.minor.length + issues.advisories.length > 0;
+            if (hasOpenDefects) {
+                const section = (label, items) => {
+                    if (!items.length) return;
+                    output += `\n**${label}:**\n`;
+                    for (const item of items) output += `- ${item}\n`;
+                };
+                section('Dangerous defects (do not drive until repaired)', issues.dangerous);
+                section('Major defects (repair immediately)', issues.major);
+                section('Minor defects (repair soon)', issues.minor);
+                section('Advisories (monitor and repair if necessary)', issues.advisories);
+            } else if (latest) {
+                output += `\nNo outstanding defects or advisories recorded at the latest test.\n`;
+            }
+
+            if (issues.hasOutstandingRecall) {
+                output += `\n## ⚠️ Safety Recall\n\n`;
+                for (const recall of record.recalls) output += `${recall}\n\n`;
+            } else {
+                output += `\nNo outstanding safety recalls.\n`;
+            }
+
+            // Full test history, most-recent-first as the page renders it.
+            if (record.tests.length > 0) {
+                output += `\n## Full MOT History (${record.tests.length} test${record.tests.length === 1 ? '' : 's'})\n\n`;
+                for (const test of record.tests) {
+                    const result = test.result ? String(test.result).toUpperCase() : 'UNKNOWN';
+                    output += `### ${test.date || 'Date unknown'} — ${result}\n`;
+                    if (test.mileage) output += `- Mileage: ${test.mileage}\n`;
+                    if (test.testNumber) output += `- Test number: ${test.testNumber}\n`;
+                    if (test.expiryDate) output += `- Expiry date: ${test.expiryDate}\n`;
+                    const defectLines = (items) => items.length
+                        ? items.map(i => `  - ${i}`).join('\n')
+                        : '';
+                    if (test.dangerous && test.dangerous.length) output += `- Dangerous defects:\n${defectLines(test.dangerous)}\n`;
+                    if (test.major && test.major.length) output += `- Major defects:\n${defectLines(test.major)}\n`;
+                    if (test.minor && test.minor.length) output += `- Minor defects:\n${defectLines(test.minor)}\n`;
+                    if (test.advisories && test.advisories.length) output += `- Advisories:\n${defectLines(test.advisories)}\n`;
+                    output += '\n';
+                }
+            }
+
+            logger.info(`MOT history returned: ${record.tests.length} test(s), latest ${issues.latestResult || 'none'}${issues.hasOutstandingRecall ? ', outstanding recall' : ''}`);
+            logger.trace(`Response: ${logger.preview(output)}`);
+
+            return {
+                content: [
+                    {
+                        type: 'text',
+                        text: output,
+                    },
+                ],
+            };
+        } catch (error) {
+            logger.error('check_mot_history failed', error);
+            return {
+                content: [
+                    {
+                        type: 'text',
+                        text: `Error checking MOT history: ${error.message}`,
                     },
                 ],
                 isError: true,

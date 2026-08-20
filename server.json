@@ -1,7 +1,7 @@
 {
     "$schema": "https://raw.githubusercontent.com/modelcontextprotocol/registry/main/schemas/server.json",
     "name": "car-deals-mcp",
-    "description": "Search for car deals across Cars.com, Autotrader, and KBB with CarFax filters (1-Owner, No Accidents, Personal Use)",
+    "description": "Search for car deals across US sources (Cars.com, Autotrader, KBB) and UK sources (Autotrader UK, Motors.co.uk, Cinch) with CarFax filters (US), plus UK MOT history checks with outstanding-defect and safety-recall surfacing",
     "vendor": {
         "name": "Your Name",
         "url": "https://github.com/YOUR_USERNAME"
@@ -22,7 +22,15 @@
     "tools": [
         {
             "name": "search_car_deals",
-            "description": "Search for car deals with filters for make, model, price, mileage, and CarFax history (1-Owner, No Accidents, Personal Use)"
+            "description": "Search for car deals with filters for make, model, price, mileage, and CarFax history (1-Owner, No Accidents, Personal Use). US sources: Cars.com, Autotrader, KBB. UK sources: Autotrader UK, Motors.co.uk, Cinch."
+        },
+        {
+            "name": "get_listing_details",
+            "description": "Fetch the full detail page for a single car listing and return it as markdown"
+        },
+        {
+            "name": "check_mot_history",
+            "description": "UK only. Check a UK vehicle's MOT history via GOV.UK and surface outstanding dangerous/major/minor defects, advisories, MOT expiry, and any active safety recalls"
         }
     ],
     "categories": [
@@ -35,6 +43,8 @@
         "deals",
         "carfax",
         "automotive",
-        "shopping"
+        "shopping",
+        "uk",
+        "mot"
     ]
 }

@@ -1,28 +1,31 @@
 {
     "$schema": "https://raw.githubusercontent.com/modelcontextprotocol/registry/main/schemas/server.json",
     "name": "car-deals-mcp",
-    "description": "Search for car deals across US sources (Cars.com, Autotrader, KBB) and UK sources (Autotrader UK, Motors.co.uk, Cinch) with CarFax filters (US), plus UK MOT history checks with outstanding-defect and safety-recall surfacing",
+    "description": "Search for car deals across US sources (Cars.com, Autotrader, KBB) and UK sources (Autotrader UK, Motors.co.uk, Cinch, eBay Motors) with CarFax filters (US), plus UK MOT history checks with outstanding-defect and safety-recall surfacing",
     "vendor": {
-        "name": "Your Name",
-        "url": "https://github.com/YOUR_USERNAME"
+        "name": "dan0v",
+        "url": "https://github.com/dan0v"
     },
-    "sourceUrl": "https://github.com/YOUR_USERNAME/car-deals-mcp",
+    "sourceUrl": "https://github.com/dan0v/car_deals_search_mcp",
     "license": "MIT",
-    "runtime": "node",
+    "runtime": "python",
     "packages": {
-        "npm": {
+        "uvx": {
             "name": "car-deals-mcp",
-            "command": "npx",
+            "command": "uvx",
             "args": [
-                "-y",
-                "car-deals-mcp"
+                "--from",
+                "git+https://github.com/dan0v/car_deals_search_mcp",
+                "car-deals-mcp",
+                "--country",
+                "US"
             ]
         }
     },
     "tools": [
         {
             "name": "search_car_deals",
-            "description": "Search for car deals with filters for make, model, price, mileage, and CarFax history (1-Owner, No Accidents, Personal Use). US sources: Cars.com, Autotrader, KBB. UK sources: Autotrader UK, Motors.co.uk, Cinch."
+            "description": "Search for car deals with filters for make, model, price, mileage, and CarFax history (1-Owner, No Accidents, Personal Use). US sources: Cars.com, Autotrader, KBB. UK sources: Autotrader UK, Motors.co.uk, Cinch, eBay Motors."
         },
         {
             "name": "get_listing_details",

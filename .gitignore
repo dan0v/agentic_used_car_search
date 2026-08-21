@@ -1,5 +1,7 @@
 # Dependencies
 node_modules/
+.venv/
+venv/
 
 # Logs
 logs
@@ -27,5 +29,12 @@ build/
 # npm pack output (`just build`)
 *.tgz
 
-# Puppeteer
+# Python build
+*.egg-info/
+__pycache__/
+
+# Puppeteer / cloakbrowser
 .cache/
+
+# uv
+# uv.lock is committed

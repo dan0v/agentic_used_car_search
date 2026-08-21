@@ -1,0 +1,94 @@
+[project]
+name = "car-deals-mcp"
+version = "1.0.0"
+description = "MCP server that searches used car listings (US + UK) and checks UK MOT history"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+authors = [{ name = "dan0v" }]
+keywords = ["mcp", "car-deals", "scraper", "cars.com", "autotrader", "kbb", "uk", "mot"]
+classifiers = ["License :: OSI Approved :: MIT License"]
+dependencies = [
+    "cloakbrowser",
+    "mcp>=1.30",
+    # HTML -> markdown for the detail-page tool (replaces JS Turndown).
+    # A custom <dl> handler pairs <dt>/<dd> into `- **Term:** Value`, the one
+    # non-trivial conversion the detail tool needs.
+    "markdownify>=0.13",
+    # Direct HTTP for the UK sources that expose an unauthenticated API
+    # (Autotrader UK GraphQL, Cinch REST). The browser scrapers stay on
+    # CloakBrowser; these two migrated to plain HTTP for richer structured
+    # fields, no anti-bot, and a per-domain throttle to avoid rate limits.
+    "httpx>=0.27",
+]
+
+# The uvx-able console entry. `uvx --from git+... car-deals-mcp` runs this.
+[project.scripts]
+car-deals-mcp = "car_deals_mcp.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/car_deals_mcp"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "test"]
+
+[tool.ruff.lint]
+# Mirror the spirit of the JS eslint config: catch unused vars, undefined
+# names, and obvious mistakes. Keep it light - this is a scraper, not a
+# library API surface.
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes (unused vars, undefined names, redefinitions)
+    "W",   # pycodestyle warnings
+    "I",   # isort (import order)
+    "B",   # bugbear (likely bugs)
+    "UP",  # pyupgrade
+    "SIM", # simplify
+]
+ignore = [
+    "E501",   # line length handled by formatter
+    "B008",   # function call in default arg (argparse uses this)
+    "SIM117", # nested with - sometimes clearer
+]
+
+[tool.ruff.lint.per-file-ignores]
+# page.evaluate payloads are JS strings - long, and intentionally not Python.
+# The formatter handles line length globally (E501 is off above), so no
+# per-file overrides are needed for them here.
+"test/*" = ["B011"]
+
+[tool.ruff.format]
+quote-style = "single"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unreachable = true
+# The MCP SDK and cloakbrowser ship without py.typed markers; don't let that
+# block the gate on our own code.
+ignore_missing_imports = true
+# page.evaluate returns Any; the JS-extracted dicts are untyped. Keep the
+# scraper's browser-interaction surface loose rather than fighting Playwright's
+# incomplete stubs.
+[[tool.mypy.overrides]]
+module = ["car_deals_mcp.scrapers.*"]
+disable_error_code = ["arg-type", "attr-defined", "call-arg", "index", "no-any-return", "operator", "return-value", "union-attr"]
+
+[[tool.mypy.overrides]]
+module = ["car_deals_mcp.server"]
+disable_error_code = ["no-any-return", "arg-type", "call-arg", "attr-defined"]

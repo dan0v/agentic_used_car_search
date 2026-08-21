@@ -4,27 +4,20 @@
   "name": "car-deals-search-mcp",
   "displayName": "Car Deals (MCP)",
   "version": "1.0.0",
-  "description": "Search used car listings from Cars.com, Autotrader and KBB (US) or Autotrader UK, Motors.co.uk and Cinch (UK), plus UK MOT history checks. MCP-compatible server.",
+  "description": "Search used car listings from Cars.com, Autotrader and KBB (US) or Autotrader UK, Motors.co.uk, Cinch and eBay Motors (UK), plus UK MOT history checks. MCP-compatible server (Python, stdio).",
   "author": "dan0v",
   "homepage": "https://github.com/dan0v/car_deals_search_mcp",
   "icon": "assets/icon.svg",
   "license": "MIT",
   "entry": {
-    "command": "node",
-    "args": ["src/server.js"]
+    "command": "uvx",
+    "args": ["--from", "git+https://github.com/dan0v/car_deals_search_mcp", "car-deals-mcp", "--country", "US"]
   },
-  "ports": [
-    {
-      "name": "http",
-      "protocol": "http",
-      "port": 3000
-    }
-  ],
   "permissions": [
     "network",
     "filesystem"
   ],
-  "tags": ["scraper","cars","mcp","search"],
+  "tags": ["scraper", "cars", "mcp", "search", "uk", "mot"],
   "schema": {
     "tool": "search_car_deals",
     "parameters": {
@@ -46,7 +39,7 @@
   "tools": [
     {
       "name": "search_car_deals",
-      "description": "Search for car deals across US (Cars.com, Autotrader, KBB) and UK (Autotrader UK, Motors.co.uk, Cinch) sources"
+      "description": "Search for car deals across US (Cars.com, Autotrader, KBB) and UK (Autotrader UK, Motors.co.uk, Cinch, eBay Motors) sources"
     },
     {
       "name": "get_listing_details",

@@ -1,8 +1,10 @@
 # Car Deals Search MCP
 
-> **Search used car listings from Cars.com, Autotrader, and KBB (US) or Autotrader UK, Motors.co.uk, and Cinch (UK) with AI assistants — plus UK MOT history checks**
+> **Search used car listings from Cars.com, Autotrader, and KBB (US) or Autotrader UK, Motors.co.uk, Cinch, and eBay Motors (UK) with AI assistants — plus UK MOT history checks**
 
 An MCP (Model Context Protocol) server that aggregates and searches car listings from multiple sources across the US and UK. Scrapes listings in parallel, extracts price, mileage, dealer info, and applies optional CARFAX-style filters (1-owner, no accidents, personal use) for US sources. UK listings return title, price (GBP), mileage, and location/distance where available. A dedicated `check_mot_history` tool pulls a UK vehicle's MOT history from the GOV.UK service and surfaces any outstanding defects and safety recalls.
+
+This is the **Python port**: `uv`/`uvx` runner, [CloakBrowser](https://github.com/cloakbrowser/cloakbrowser) for stealth browsing, the official [Python MCP SDK](https://github.com/modelcontextprotocol/python-sdk).
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -12,41 +14,37 @@ An MCP (Model Context Protocol) server that aggregates and searches car listings
 
 ### Prerequisites
 
-- **Node.js** (v16 or higher)
-- **Chrome/Chromium** browser installed (required by Puppeteer)
-  - If Chrome is not in the default location, set `PUPPETEER_EXECUTABLE_PATH` environment variable to point to your Chrome/Chromium binary
+- **Python** 3.11+ (3.14 recommended; `uv` will fetch one for you)
+- **[uv](https://github.com/astral-sh/uv)** installed (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
+- No Chrome install needed — CloakBrowser downloads its patched Chromium 151 build on first run (~200 MB, cached).
 
 ### Add to your MCP client (recommended)
 
-No clone, no install. Add this to your client's MCP config and restart it — `npx`
-fetches and runs the server on first launch:
+No clone, no install. Add this to your client's MCP config and restart it — `uvx` fetches and runs the server on first launch:
 
 ```json
 {
   "mcpServers": {
     "car-deals": {
-      "command": "npx",
-      "args": ["-y", "github:ejlevin1/car_deals_search_mcp"]
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/dan0v/car_deals_search_mcp",
+        "car-deals-mcp",
+        "--country",
+        "UK",
+        "--cloakbrowser-key",
+        "cb_xxxxxxxx"
+      ]
     }
   }
 }
 ```
 
-If Chrome is not in the default location, point Puppeteer at it:
+Two startup args:
 
-```json
-{
-  "mcpServers": {
-    "car-deals": {
-      "command": "npx",
-      "args": ["-y", "github:ejlevin1/car_deals_search_mcp"],
-      "env": {
-        "PUPPETEER_EXECUTABLE_PATH": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-      }
-    }
-  }
-}
-```
+- `--country` — default country the server operates in (`"US"` or `"UK"`). Sets the default for `search_car_deals` when the client doesn't pass `country`. Allows a deployment to be UK-only or US-only by configuration without per-call args. A per-call `country` still overrides it.
+- `--cloakbrowser-key` — CloakBrowser license key (free GitHub-sign-in key, or paid). Can also be read from the `CLOAKBROWSER_LICENSE_KEY` env var; the CLI arg wins. The key selects the always-current Chromium 151 build; without it CloakBrowser falls back to the older free Chromium 146 build (still works, ages over time).
 
 Where that config lives:
 
@@ -61,83 +59,59 @@ Where that config lives:
 Notes:
 
 - The transport is **stdio** — no port, no URL, nothing to start beforehand.
-- `npx` installs into its cache on first run, so the **first launch takes ~15-20s**.
-  Later launches are fast until the cache is cleared.
-- This is not published to the npm registry; the `github:` spec above installs
-  straight from this repo's default branch.
+- `uvx` installs into its cache on first run, so the **first launch takes ~15-30s** (plus the one-time Chromium download). Later launches are fast until the cache is cleared.
 
 Verify it works without any client:
 
 ```bash
-echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"probe","version":"1"}}}' \
-  | npx -y github:ejlevin1/car_deals_search_mcp
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"probe","version":"1"}}}' \
+  | uvx --from git+https://github.com/dan0v/car_deals_search_mcp car-deals-mcp --country US
 ```
 
-You should see `Car Deals MCP Server running on stdio` followed by a JSON result
-naming `car-deals-mcp`.
+You should see `Car Deals MCP Server running on stdio` on stderr followed by a JSON result naming `car-deals-mcp` on stdout.
 
 ### Run from a local clone instead
 
-Use this if you want to modify the scrapers — edits take effect on the next
-client restart, with no `npx` cache in the way:
+Use this if you want to modify the scrapers — edits take effect on the next client restart, with no `uvx` cache in the way:
 
 ```bash
-git clone https://github.com/ejlevin1/car_deals_search_mcp.git
+git clone https://github.com/dan0v/car_deals_search_mcp.git
 cd car_deals_search_mcp
-npm ci
+uv sync
 ```
 
 ```json
 {
   "mcpServers": {
     "car-deals": {
-      "command": "node",
-      "args": ["/absolute/path/to/car_deals_search_mcp/src/server.js"]
+      "command": "uv",
+      "args": ["run", "--directory", "/absolute/path/to/car_deals_search_mcp", "car-deals-mcp", "--country", "US"]
     }
   }
 }
 ```
 
-The path must be absolute — MCP clients do not launch servers from the repo
-directory.
-
 ### Testing Standalone
 
 ```bash
-# Full end-to-end MCP client test (hits Cars.com for real, ~60-90s)
-npm run test:mcp
+# Full end-to-end MCP client test (hits Cars.com / Autotrader UK / GOV.UK for real, takes minutes)
+uv run python test/test_mcp_client.py
 
 # Quick scraper smoke test
-npm test
+just test-scraper
+# ...or by hand
+uv run python -c "import asyncio; from car_deals_mcp.scrapers import scrape_carscom; \
+  r = asyncio.run(scrape_carscom({'make':'Toyota','model':'Camry','one_owner':True}, 5)); \
+  [print(l.format()) for l in r]"
 
-# Or test manually with a specific search
-node -e "
-const { scrapeCarscom } = require('./src/scraper.js');
-scrapeCarscom({
-  make: 'Toyota',
-  model: 'Camry',
-  oneOwner: true,
-  noAccidents: true,
-  personalUse: true
-}, 5).then(listings => listings.forEach(l => console.log(l.format())));
-"
+# A UK search
+uv run python -c "import asyncio; from car_deals_mcp.scrapers import scrape_autotrader_uk; \
+  r = asyncio.run(scrape_autotrader_uk({'make':'Toyota','model':'Corolla','zip':'SW1A 1AA','price_max':15000}, 5)); \
+  [print(l.format()) for l in r]"
 
-# Or test a UK search
-node -e "
-const { scrapeAutotraderUK } = require('./src/scraper.js');
-scrapeAutotraderUK({
-  make: 'Toyota',
-  model: 'Corolla',
-  zip: 'SW1A 1AA',
-  priceMax: 15000
-}, 5).then(listings => listings.forEach(l => console.log(l.format())));
-"
-
-# Or test a UK MOT history check
-node -e "
-const { fetchMotHistory } = require('./src/scraper.js');
-fetchMotHistory('YL08 NNV').then(r => console.log(JSON.stringify(r.outstandingIssues, null, 2)));
-"
+# A UK MOT history check
+uv run python -c "import asyncio, json; from car_deals_mcp.scrapers import fetch_mot_history; \
+  r = asyncio.run(fetch_mot_history('YL08 NNV')); print(json.dumps(r['outstanding_issues'], indent=2))"
 ```
 
 If you have [`just`](https://github.com/casey/just) installed, `just --list`
@@ -147,13 +121,13 @@ shows every task (`just check`, `just test`, `just build`, ...).
 
 ## ✨ Features
 
-- **Multi-source aggregation**: Search Cars.com, Autotrader, and KBB (US) or Autotrader UK, Motors.co.uk, and Cinch (UK) simultaneously
+- **Multi-source aggregation**: Search Cars.com, Autotrader, and KBB (US) or Autotrader UK, Motors.co.uk, Cinch, and eBay Motors (UK) simultaneously
 - **US & UK support**: Pass `country: "UK"` to search UK marketplaces with a postcode instead of a ZIP code
 - **Smart filtering**: CARFAX-style filters (1-Owner, No Accidents, Personal Use) for US sources
 - **MOT history checks (UK)**: Pull a UK vehicle's full MOT history from GOV.UK and get outstanding dangerous/major/minor defects, advisories, MOT expiry, and active safety recalls
 - **Deal ratings**: Heuristic-based deal quality assessment (US sources)
-- **Parallel scraping**: Fast concurrent queries across sources
-- **Stealth mode**: Puppeteer with anti-bot detection techniques
+- **Parallel scraping**: Fast concurrent queries across sources (`asyncio.gather`)
+- **Stealth browsing**: CloakBrowser patches Chromium at the C++ source level (canvas, WebGL, WebRTC, `navigator.webdriver`, CDP detection) — clears the Imperva/Cloudflare checks that JS-injection stealth plugins lose to
 
 ---
 
@@ -174,6 +148,7 @@ shows every task (`just check`, `just test`, `just build`, ...).
 | Autotrader UK | ✅    | ✅              | ✅              | Default UK source; searched by postcode           |
 | Motors.co.uk  | ✅    | ✅ (approx.)    | ✅ (distance)   | Mileage shown rounded (e.g. "41.2k")             |
 | Cinch         | ✅    | ✅              | ❌              | Nationwide delivery retailer, no postcode/distance |
+| eBay Motors   | ✅    | ✅ (browser)    | ⚠️              | Uses the official Browse API when `EBAY_CLIENT_ID`/`EBAY_CLIENT_SECRET` are set; falls back to browser scraping otherwise. No registration plate. |
 
 Cars.com cards embed a `data-vehicle-details` JSON payload, which is where the
 VIN, trim, body style, drivetrain, fuel type, exterior color, dealer identity and
@@ -210,7 +185,7 @@ Two caveats:
 | `priceMax`   | integer  | ❌       | Maximum price. US: in USD. UK: in GBP |
 | `mileageMax` | integer  | ❌       | Maximum mileage. Applied client-side for sources that lack a server-side mileage filter (e.g. Motors.co.uk, Cinch) |
 | `maxResults` | integer  | ❌       | Max results per source (default: 10) |
-| `sources`    | array    | ❌       | Sources to query. US: `["cars.com","autotrader","kbb"]`. UK: `["autotrader-uk","motors","cinch"]`. Default: `"cars.com"` (US) or `"autotrader-uk"` (UK) |
+| `sources`    | array    | ❌       | Sources to query. US: `["cars.com","autotrader","kbb"]`. UK: `["autotrader-uk","motors","cinch","ebay"]`. Default: `"cars.com"` (US) or `"autotrader-uk"` (UK) |
 | `oneOwner`   | boolean  | ❌       | US only. Filter for CARFAX 1-owner vehicles. Ignored by UK sources |
 | `noAccidents`| boolean  | ❌       | US only. Filter for no accidents reported. Ignored by UK sources |
 | `personalUse`| boolean  | ❌       | US only. Filter for personal use only (not rental/fleet). Ignored by UK sources |
@@ -322,9 +297,10 @@ interior colors, the full options/features list, price history, vehicle history
 and seller notes.
 
 Rather than parsing each field with a selector, the page is pruned (nav, ads,
-scripts, recommendation carousels removed) and converted to markdown. Nothing to
-re-fix when the sites reshuffle their markup, and the caller sees every detail
-the page shows.
+scripts, recommendation carousels removed) and converted to markdown with
+`markdownify` (a custom `<dl>` handler pairs each spec term/value into
+`- **Term:** Value`). Nothing to re-fix when the sites reshuffle their markup,
+and the caller sees every detail the page shows.
 
 ### Parameters
 
@@ -366,24 +342,15 @@ page, so a call can take ~20-60s.
 
 ## 🛠️ Technical Details
 
-- **Scraping**: Puppeteer (headless Chromium) with stealth plugin to bypass bot detection
-- **Concurrency**: Parallel scraper workers for simultaneous multi-source queries
-- **Protocol**: Implements MCP (Model Context Protocol) for AI assistant integration
-- **Data extraction**: Source-specific parsers normalize listings into a common schema
+- **Scraping**: CloakBrowser (a patched Playwright `Browser`) — `launch_async` for the async MCP server, `humanize=True` for human-like input timing
+- **Concurrency**: `asyncio.gather` for parallel multi-source queries
+- **Protocol**: Implements MCP (Model Context Protocol) via the official Python SDK's lowlevel `Server`
+- **Data extraction**: Source-specific parsers normalize listings into a common `CarListing` dataclass
+- **HTML→Markdown**: `markdownify` (with a custom `<dl>` converter) for the detail tool
 
-### Chrome/Chromium Requirement
+### CloakBrowser downloads its own Chromium
 
-This project uses Puppeteer, which requires Chrome or Chromium to be installed:
-
-- **macOS**: Chrome is typically at `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`
-- **Linux**: Usually auto-detected by Puppeteer or at `/usr/bin/chromium-browser`
-- **Windows**: Typically at `C:\Program Files\Google\Chrome\Application\chrome.exe`
-
-If Puppeteer cannot find your browser, set the environment variable:
-
-```bash
-export PUPPETEER_EXECUTABLE_PATH="/path/to/chrome"
-```
+CloakBrowser downloads its patched Chromium 151 build on first run (~200 MB, cached under `~/.cache/cloakbrowser`). With a license key it stays current; without one it uses the free Chromium 146 build. No system Chrome install is required and `PUPPETEER_EXECUTABLE_PATH`-style env vars do not apply.
 
 ---
 
@@ -408,8 +375,8 @@ environment variable wins when both are given.
 {
   "mcpServers": {
     "car-deals": {
-      "command": "npx",
-      "args": ["-y", "github:ejlevin1/car_deals_search_mcp"],
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/dan0v/car_deals_search_mcp", "car-deals-mcp", "--country", "US"],
       "env": {
         "CAR_DEALS_LOG_LEVEL": "debug"
       }
@@ -421,36 +388,60 @@ environment variable wins when both are given.
 Running it directly:
 
 ```bash
-CAR_DEALS_LOG_LEVEL=debug node src/server.js
-node src/server.js --verbose
+CAR_DEALS_LOG_LEVEL=debug uv run car-deals-mcp
+uv run car-deals-mcp --verbose
 ```
 
 Every exception the server hits is written to stderr, including ones that are
 also reported to the client as a tool error, and ones that escape the tool
-handlers entirely. Stack traces (and the `cause` chain that identifies which
-Puppeteer call actually failed) appear at `debug` and above.
+handlers entirely. Stack traces (and the `__cause__` chain that identifies
+which browser call actually failed) appear at `debug` and above.
 
 > **Note:** the MCP SDK forwards only a fixed subset of environment variables
-> (`HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, `USER`) to a server subprocess.
-> `CAR_DEALS_LOG_LEVEL` therefore has to be set in the client's `env` block as
-> above — exporting it in your shell will not reach a client-launched server.
+> to a server subprocess. `CAR_DEALS_LOG_LEVEL` therefore has to be set in the
+> client's `env` block as above — exporting it in your shell will not reach a
+> client-launched server.
+
+### eBay Motors UK (optional API credentials)
+
+The `ebay` UK source uses eBay's official **Browse API** when OAuth2
+application credentials are present, and falls back to browser scraping
+`ebay.co.uk` when they are not. The API path returns richer structured data
+and avoids anti-bot checks entirely.
+
+To enable the API path, register an application at the
+[eBay Developer Portal](https://developer.ebay.com), then set the
+`client_id` and `client_secret` (under *Application Keys*) as environment
+variables in the client's `env` block:
+
+```json
+{
+  "mcpServers": {
+    "car-deals": {
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/dan0v/car_deals_search_mcp", "car-deals-mcp", "--country", "UK"],
+      "env": {
+        "EBAY_CLIENT_ID": "your-ebay-client-id",
+        "EBAY_CLIENT_SECRET": "your-ebay-client-secret"
+      }
+    }
+  }
+}
+```
+
+Without these, `ebay` still works via CloakBrowser scraping — just slower and
+more fragile to markup changes. The token is cached in-process (~2h) so
+repeated searches reuse it.
 
 ---
 
 ## 🧪 Development & Testing
 
 ```bash
-# Run tests
-npm test
-
-# Test individual scrapers
-node src/scraper.js
-
-# Run the end-to-end MCP test with server-side debug logging
-CAR_DEALS_LOG_LEVEL=debug npm run test:mcp
-
-# View code structure
-ls -la src/
+uv sync                       # install deps
+just check                    # ruff lint + format check (the offline gate)
+just test                     # live end-to-end test (minutes)
+CAR_DEALS_LOG_LEVEL=debug just test   # with server-side debug logging
 ```
 
 ---
@@ -478,6 +469,6 @@ MIT License - see [LICENSE](LICENSE) file for details
 
 ## 🔗 Links
 
-- **Repository**: https://github.com/SiddarthaKoppaka/car_deals_search_mcp
-- **Issues**: https://github.com/SiddarthaKoppaka/car_deals_search_mcp/issues
+- **Repository**: https://github.com/dan0v/car_deals_search_mcp
+- **Issues**: https://github.com/dan0v/car_deals_search_mcp/issues
 - **MCP Protocol**: https://modelcontextprotocol.io

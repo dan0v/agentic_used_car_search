@@ -3,46 +3,42 @@ default:
 
 # Install dependencies
 init:
-    npm ci
+    uv sync
 
-# Lint
-lint:
-    npm run lint
+# Lint + format check (the offline gate, run before committing)
+check:
+    uv run ruff check . && uv run ruff format --check . && uv run mypy src
 
 # Lint and autofix what can be fixed
 lint-fix:
-    npm run lint:fix
+    uv run ruff check --fix . && uv run ruff format .
 
-# Fail on .editorconfig violations (indentation, line endings, trailing space)
-ec:
-    npm run ec
-
-# Parse every source file to catch syntax errors
+# Import-smoke every source module to catch syntax/import errors
 syntax:
-    npm run syntax
+    uv run python -c "import car_deals_mcp.server, car_deals_mcp.scrapers, car_deals_mcp.logger"
 
-# Everything that runs without touching the network
-check: lint ec syntax
-
-# Full end-to-end MCP client test - hits Cars.com for real, takes ~60-90s
+# Full end-to-end MCP client test - hits Cars.com / Autotrader UK / GOV.UK for real, takes minutes
 test:
-    npm run test:mcp
+    uv run python test/test_mcp_client.py
 
-# Scrape a few Cars.com listings and print them - quick scraper smoke test
+# Quick Cars.com smoke - print a few listings
 test-scraper:
-    npm run test
+    uv run python -c "import asyncio; from car_deals_mcp.scrapers import scrape_carscom; \
+        from car_deals_mcp.types import SearchParams; \
+        r = asyncio.run(scrape_carscom(SearchParams(make='Toyota', model='Camry'), 3)); \
+        [print(l.format()) for l in r.listings]"
 
 # check plus the live tests
 check-all: check test
 
-# Pack the publishable tarball (there is no compile step; this is a CJS package)
+# Build the wheel + sdist (replaces npm pack)
 build:
-    npm run build
+    uv build
 
 # Run the MCP server on stdio, as an MCP client would
 run:
-    npm start
+    uv run car-deals-mcp
 
 # Delete build output and installed dependencies
 clean:
-    rm -rf node_modules *.tgz
+    rm -rf .venv dist/ build/ *.egg-info/ __pycache__/ src/*.egg-info/

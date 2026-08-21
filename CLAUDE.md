@@ -310,13 +310,21 @@ selectors) is the wrong one. Two separate things have to be right:
 Single-word names (`toyota-camry`) survive a plain `toLowerCase()`, which is
 why this went unnoticed: the test suite only searched Toyota Camry. Keep the
 Mercedes-Benz cases in `test/test_mcp_client.py`.
-- **Detail pages** (`fetch_listing_details`) are deliberately *not* field-parsed.
-  The page is pruned (nav, ads, scripts, carousels) and converted to markdown
-  with `markdownify` (a custom `<dl>` converter pairs `<dt>`/`<dd>` into
+- **Detail pages** (`fetch_listing_details`) are deliberately *not* field-parsed
+  by default. The page is pruned (nav, ads, scripts, carousels) and converted to
+  markdown with `markdownify` (a custom `<dl>` converter pairs `<dt>`/`<dd>` into
   `- **Term:** Value`). That is the whole design: no selectors to maintain when
   the sites reshuffle. Detail pages also sit behind an anti-bot interstitial more
   often than search pages, so `wait_out_interstitial` polls for up to 45s rather
   than converting the challenge page into the answer.
+  **Exception — Autotrader UK**: the detail page there is *not* Cloudflare-walled
+  and ships the whole advert in `window.__staticRouterHydrationData` as JSON.
+  The tool dispatches on host: for `autotrader.co.uk` it uses a direct-HTTP
+  harvest (`_extract_at_uk_hydration` + `_at_uk_harvest_to_markdown`) that
+  returns structured markdown **including the registration plate**, which the
+  search API explicitly does not give you. If the harvest fails for any reason
+  (`FormatSourceError`, transient HTTP error, Cloudflare turns on), it falls
+  back to the generic browser-prune path unchanged.
 
 Text-parsing heuristics here have all broken at least once and carry comments
 explaining what broke. Keep patterns bounded literals, never greedy wildcards —

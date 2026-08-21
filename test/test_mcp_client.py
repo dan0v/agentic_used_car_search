@@ -338,6 +338,43 @@ async def main() -> None:
                     'expected an Autotrader UK detail URL on at least one listing',
                 )
                 print('[PASS] live UK search_car_deals call returned real Autotrader UK listings')
+
+                # --- Autotrader UK detail via direct-HTTP hydration harvest ---
+                # The detail page is not Cloudflare-walled; it ships the whole
+                # advert in `__staticRouterHydrationData`. Assert the harvest
+                # path returns structured data (the title + a "Key specification"
+                # section) rather than the browser-prune markdown.
+                m_atuk = re.search(r'https://www\.autotrader\.co\.uk/car-details/\S+', uk_text)
+                assert m_atuk, 'expected an Autotrader UK car-details URL from the search above'
+                atuk_url = m_atuk.group(0).rstrip()
+                print(
+                    '[INFO] calling get_listing_details on Autotrader UK URL - hydration harvest ...'
+                )
+                atuk_result = await client.call_tool(
+                    'get_listing_details',
+                    {'url': atuk_url},
+                    progress_callback=on_detail_progress,
+                )
+                assert atuk_result.is_error is False, (
+                    f'AT UK detail call errored: {atuk_result.content[0].text[:300]}'
+                )
+                atuk_text = atuk_result.content[0].text
+                assert_match(atuk_text, r'\*\*Source:\*\* Autotrader UK')
+                # The harvest returns structured sections; the browser prune
+                # would return raw page markdown. These section names come from
+                # _at_uk_harvest_to_markdown.
+                assert_match(atuk_text, r'## Key specification', 'expected a rendered spec section')
+                assert_match(atuk_text, r'## Price', 'expected a rendered price section')
+                # The hydration harvest is the one detail path that can see the
+                # registration/history fields the SSR embeds; exercise one of them.
+                assert_match(
+                    atuk_text,
+                    r'## Registration|MOT status',
+                    'expected registration/MOT info (harvested fields, not prune output)',
+                )
+                print(
+                    f'[PASS] Autotrader UK detail hydration harvest returned {len(atuk_text)} chars'
+                )
             else:
                 print(
                     '[PASS] live UK search_car_deals call completed (no listings this time - path exercised, no regression)'

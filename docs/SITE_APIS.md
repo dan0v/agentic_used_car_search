@@ -5,7 +5,7 @@ reverse-engineerable search API that could replace browser scraping. The goal
 is richer structured data and no anti-bot, but any direct-HTTP migration must
 respect per-domain rate limits (see "Rate-limiting design" below).
 
-Last verified: Aug 2026.
+Last verified: Aug 2026 (Autotrader UK detail-page harvest added 21 Aug 2026).
 
 ---
 
@@ -13,7 +13,8 @@ Last verified: Aug 2026.
 
 | Site | API? | Type | Auth | Filters | Recommendation |
 |------|------|------|------|---------|-----------------|
-| **Autotrader UK** | Yes | GraphQL | none (headers only) | all, incl. mileage/drivetrain/transmission | Migrate — best option |
+| **Autotrader UK (search)** | Yes | GraphQL | none (headers only) | all, incl. mileage/drivetrain/transmission | Migrate — best option |
+| **Autotrader UK (detail)** | Yes | SSR JSON (`__staticRouterHydrationData`) | none | n/a (single advert by id) | Migrate — no GraphQL exists for details; harvest SSR instead |
 | **Cinch** | Yes | REST JSON | none | all except mileage | Migrate (mileage client-side); returns the plate |
 | **Motors.co.uk** | No (Cazoo SSR) | — | — | — | Keep HTML scraping |
 | **Autotrader US** | No callable API | SSR (`__NEXT_DATA__`) | — | SSR facets | SSR JSON harvest (no browser) |
@@ -191,9 +192,41 @@ High — this is the SPA's own contract. Risk points:
   the card. The API returns structured fields, so migrating to the API
   removes the regex-parse fragility entirely.
 - The search card does NOT show the registration plate. The API does not
-  return it either in the fields I requested; check whether a `registration`
-  field exists on `SearchListing` by probing (field-level errors will tell
-  you). If absent, the plate is still only on the detail page.
+  return it either in the fields I requested. But the detail page (see
+  "Detail page" below) embeds it in the SSR hydration JSON, bypassing the
+  issue entirely.
+
+### Detail page — `https://www.autotrader.co.uk/car-details/{advertId}`
+
+The detail page is a **separate SPA** (`product-page-web`, not
+`sauron-search-results-app`) and its bundle makes **zero** calls to
+`at-gateway` — so there is **no GraphQL "get advert by id" operation** to
+call. Instead the whole advert ships embedded in the SSR HTML as:
+
+```
+window.__staticRouterHydrationData = JSON.parse("{\"loaderData\":{\"car-details\":{\"aggregatorAdvert\":{ ... }}}}")
+```
+
+Decode the JS string layer first (`json.loads('"' + raw + '"')`), then the
+JSON layer. `aggregatorAdvert` carries everything the detail prune can give
+you **plus** fields the browser prune can't guarantee and the search API
+explicitly does not return:
+
+| Key in `aggregatorAdvert` | Content |
+|---|---|
+| `heading`, `details` | title, subtitle, cash price, market-price rating |
+| `keySpecification[]` | mileage, registration, owners, fuel, body, engine, gearbox, colour, etc. |
+| `specs[]` | full Performance / Size-and-dimensions tables |
+| `runningCosts.runningCostList[]` | mpg, tax, insurance group, CO₂ |
+| `history` | MOT status, owners, service history, stolen/scrapped/write-off checks |
+| `description.text[]`, `description.vehicleRegistration` | seller text **+ registration-plate date** |
+| `featuresWithDisclaimer.features[]` | full "see all features" list (already expanded — no button) |
+
+The domain is **not** behind Cloudflare at this path (unlike cars.com). A plain
+`GET` via `_http.throttled_request` returns HTTP 200 with the hydration blob.
+The `get_listing_details` tool dispatches on host to this path; if the harvest
+fails (`FormatSourceError`, transient HTTP error, Cloudflare turns on),
+it falls back to the generic browser-prune path unchanged.
 
 ---
 

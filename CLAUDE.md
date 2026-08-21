@@ -8,13 +8,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 just init          # uv sync
-just check         # ruff lint + format check — the offline gate, run before committing
+just check         # ruff lint + format check + mypy type check — the offline gate, run before committing
 just lint-fix      # ruff check --fix + ruff format
+just syntax        # smoke-test module imports
 just test          # uv run python test/test_mcp_client.py — full end-to-end MCP client test, hits Cars.com / Autotrader UK / GOV.UK live (minutes)
 just test-scraper  # quick scrape_carscom smoke test, prints formatted listings
 just check-all     # check + test
 just build         # uv build (wheel + sdist; replaces npm pack)
 just run           # start the server on stdio
+just clean         # remove .venv, build artifacts, __pycache__
 ```
 
 There is no test framework and no unit tests. `test/test_mcp_client.py` is a
@@ -37,7 +39,7 @@ as a console script (`car-deals-mcp = car_deals_mcp.__main__:main`).
 
 ### Startup args (the production launch contract)
 
-The server runs on stdio. Two startup arguments are required (user-facing
+The server runs on stdio. Two startup arguments are standard (user-facing
 contract — do not break it):
 
 - `--country` — default country the server operates in. `"US"` or `"UK"`. Sets
@@ -50,6 +52,11 @@ contract — do not break it):
   `cloakbrowser.launch_async(...)` so the always-current Chromium 151 build is
   used. Without a key, CloakBrowser falls back to the older free Chromium 146
   build (still works, ages over time).
+
+Additional CLI flags:
+- `--verbose`, `-v` — sets log level to `debug`.
+- `--trace` — sets log level to `trace` (verbosest).
+- `CAR_DEALS_LOG_LEVEL` environment variable wins over CLI flags when set.
 
 Example production invocation:
 ```

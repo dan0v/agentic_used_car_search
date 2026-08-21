@@ -21,10 +21,11 @@
   "schema": {
     "tool": "search_car_deals",
     "parameters": {
-      "make": { "type": "string", "required": true },
-      "model": { "type": "string", "required": true },
+      "make": { "type": "string" },
+      "model": { "type": "string" },
       "country": { "type": "string", "enum": ["US", "UK"] },
       "zip": { "type": "string" },
+      "maxDistance": { "type": "integer" },
       "yearMin": { "type": "integer" },
       "yearMax": { "type": "integer" },
       "priceMax": { "type": "integer" },
@@ -33,7 +34,9 @@
       "sources": { "type": "array", "items": { "type": "string" } },
       "oneOwner": { "type": "boolean" },
       "noAccidents": { "type": "boolean" },
-      "personalUse": { "type": "boolean" }
+      "personalUse": { "type": "boolean" },
+      "transmission": { "type": "string" },
+      "drivetrain": { "type": "string" }
     }
   },
   "tools": [

@@ -101,17 +101,19 @@ uv run python test/test_mcp_client.py
 just test-scraper
 # ...or by hand
 uv run python -c "import asyncio; from car_deals_mcp.scrapers import scrape_carscom; \
-  r = asyncio.run(scrape_carscom({'make':'Toyota','model':'Camry','one_owner':True}, 5)); \
-  [print(l.format()) for l in r]"
+  from car_deals_mcp.types import SearchParams; \
+  r = asyncio.run(scrape_carscom(SearchParams(make='Toyota', model='Camry', one_owner=True), 5)); \
+  [print(l.format()) for l in r.listings]"
 
 # A UK search
 uv run python -c "import asyncio; from car_deals_mcp.scrapers import scrape_autotrader_uk; \
-  r = asyncio.run(scrape_autotrader_uk({'make':'Toyota','model':'Corolla','zip':'SW1A 1AA','price_max':15000}, 5)); \
-  [print(l.format()) for l in r]"
+  from car_deals_mcp.types import SearchParams; \
+  r = asyncio.run(scrape_autotrader_uk(SearchParams(make='Toyota', model='Corolla', zip='SW1A 1AA', price_max=15000), 5)); \
+  [print(l.format()) for l in r.listings]"
 
 # A UK MOT history check
 uv run python -c "import asyncio, json; from car_deals_mcp.scrapers import fetch_mot_history; \
-  r = asyncio.run(fetch_mot_history('YL08 NNV')); print(json.dumps(r['outstanding_issues'], indent=2))"
+  r = asyncio.run(fetch_mot_history('YL08 NNV')); print(json.dumps(r.outstanding_issues, indent=2))"
 ```
 
 If you have [`just`](https://github.com/casey/just) installed, `just --list`
@@ -145,10 +147,10 @@ shows every task (`just check`, `just test`, `just build`, ...).
 
 | Source        | Price | Mileage        | Location        | Notes                                            |
 |---------------|:-----:|:--------------:|:---------------:|--------------------------------------------------|
-| Autotrader UK | ✅    | ✅              | ✅              | Default UK source; searched by postcode           |
-| Motors.co.uk  | ✅    | ✅ (approx.)    | ✅ (distance)   | Mileage shown rounded (e.g. "41.2k")             |
-| Cinch         | ✅    | ✅              | ❌              | Nationwide delivery retailer, no postcode/distance |
-| eBay Motors   | ✅    | ✅ (browser)    | ⚠️              | Uses the official Browse API when `EBAY_CLIENT_ID`/`EBAY_CLIENT_SECRET` are set; falls back to browser scraping otherwise. No registration plate. |
+| Autotrader UK | ✅    | ✅              | ✅              | Default UK source; direct GraphQL API (`/at-gateway`); server-side filters for price, year, mileage, transmission, drivetrain, distance; detail page exposes registration |
+| Motors.co.uk  | ✅    | ✅ (approx.)    | ✅ (distance)   | Browser-scraped (Cazoo stack); mileage shown rounded (e.g. "41.2k"); client-side filters; skipped when transmission/drivetrain requested |
+| Cinch         | ✅    | ✅              | ❌              | Direct REST API; returns registration plate (`vrm`/`fullRegistration`); nationwide delivery; server-side price, year, transmission, drivetrain; client-side mileage |
+| eBay Motors   | ✅    | ✅ (browser)    | ⚠️              | Uses official Browse API when `EBAY_CLIENT_ID`/`EBAY_CLIENT_SECRET` are set; falls back to browser scraping otherwise. Server-side year, price, transmission; client-side mileage; skipped when drivetrain requested. No registration plate. |
 
 Cars.com cards embed a `data-vehicle-details` JSON payload, which is where the
 VIN, trim, body style, drivetrain, fuel type, exterior color, dealer identity and
@@ -173,22 +175,26 @@ Two caveats:
 
 ### Parameters
 
-| Parameter    | Type     | Required | Description |
-|--------------|----------|----------|-------------|
-| `make`       | string   | ✅       | Car manufacturer (e.g., "Toyota", "Honda") |
-| `model`      | string   | ✅       | Car model (e.g., "Camry", "Accord") |
-| `country`    | string   | ❌       | `"US"` (default; the original and most fully supported scope) or `"UK"`. Selects the default `sources`, default `zip`, and currency |
-| `zip`        | string   | ❌       | Location code. US: ZIP code (default: "90210"). UK: postcode (default: "SW1A 1AA") |
-| `maxDistance`| integer  | ❌       | US only. Search radius in miles from the ZIP (e.g. 25, 50, 100, 500). `0` = nationwide. Default: site default (~30-50 mi). UK sources do not honour this |
-| `yearMin`    | integer  | ❌       | Minimum model year (applied client-side where the source lacks a server-side filter) |
-| `yearMax`    | integer  | ❌       | Maximum model year (applied client-side where the source lacks a server-side filter) |
-| `priceMax`   | integer  | ❌       | Maximum price. US: in USD. UK: in GBP |
-| `mileageMax` | integer  | ❌       | Maximum mileage. Applied client-side for sources that lack a server-side mileage filter (e.g. Motors.co.uk, Cinch) |
-| `maxResults` | integer  | ❌       | Max results per source (default: 10) |
-| `sources`    | array    | ❌       | Sources to query. US: `["cars.com","autotrader","kbb"]`. UK: `["autotrader-uk","motors","cinch","ebay"]`. Default: `"cars.com"` (US) or `"autotrader-uk"` (UK) |
-| `oneOwner`   | boolean  | ❌       | US only. Filter for CARFAX 1-owner vehicles. Ignored by UK sources |
-| `noAccidents`| boolean  | ❌       | US only. Filter for no accidents reported. Ignored by UK sources |
-| `personalUse`| boolean  | ❌       | US only. Filter for personal use only (not rental/fleet). Ignored by UK sources |
+All parameters are optional.
+
+| Parameter      | Type     | Description |
+|----------------|----------|-------------|
+| `make`         | string   | Car manufacturer (e.g., "Toyota", "Honda"). Recommended; searches all cars if omitted |
+| `model`        | string   | Car model (e.g., "Camry", "Accord"). Recommended; searches all cars if omitted |
+| `country`      | string   | `"US"` (default) or `"UK"`. Selects the default `sources`, default `zip`/postcode, and currency |
+| `zip`          | string   | Location code. US: ZIP code (default: "90210"). UK: postcode (default: "SW1A 1AA") |
+| `maxDistance`  | integer  | Search radius in miles. US: from ZIP code (0 = nationwide). UK: from postcode on Autotrader UK (0 = nationwide / 1500 mi). Motors.co.uk and Cinch do not honour this. Default: site default (~30-50 mi) |
+| `yearMin`      | integer  | Minimum model year (applied server-side where supported, otherwise client-side) |
+| `yearMax`      | integer  | Maximum model year (applied server-side where supported, otherwise client-side) |
+| `priceMax`     | integer  | Maximum price. US: in USD. UK: in GBP |
+| `mileageMax`   | integer  | Maximum mileage. Applied client-side for sources that lack a server-side mileage filter (e.g. Motors.co.uk, Cinch) |
+| `maxResults`   | integer  | Max results per source (default: 10) |
+| `sources`      | array    | Sources to query. US: `["cars.com", "autotrader", "kbb"]`. UK: `["autotrader-uk", "motors", "cinch", "ebay"]`. Default: `["cars.com"]` (US) or `["autotrader-uk"]` (UK) |
+| `oneOwner`     | boolean  | US only. Filter for CARFAX 1-owner vehicles. Ignored by UK sources |
+| `noAccidents`  | boolean  | US only. Filter for no accidents reported. Ignored by UK sources |
+| `personalUse`  | boolean  | US only. Filter for personal use only (not rental/fleet). Ignored by UK sources |
+| `transmission` | string   | UK only. Filter by gearbox (e.g. "Manual", "Automatic"). Applied server-side by Autotrader UK, Cinch, and eBay Motors. Motors.co.uk is skipped with a warning |
+| `drivetrain`   | string   | UK only. Filter by drivetrain (e.g. "RWD", "FWD", "AWD", "4WD", or full names). Applied server-side by Autotrader UK and Cinch. Motors.co.uk and eBay Motors are skipped with a warning |
 
 ### Example Response
 
@@ -238,9 +244,9 @@ take ~15-45s while it clears.
 
 ### Parameters
 
-| Parameter       | Type    | Required | Description |
-|-----------------|---------|----------|-------------|
-| `registration`  | string | ✅       | UK vehicle registration (number plate), with or without spaces. e.g. `"YL08 NNV"` or `"YL08NNV"` |
+| Parameter       | Type    | Description |
+|-----------------|---------|-------------|
+| `registration`  | string  | **Required.** UK vehicle registration (number plate), with or without spaces. e.g. `"YL08 NNV"` or `"YL08NNV"` |
 
 ### Example Response (excerpt)
 
@@ -296,20 +302,16 @@ detail page adds VIN, trim, engine, transmission, drivetrain, MPG, exterior and
 interior colors, the full options/features list, price history, vehicle history
 and seller notes.
 
-Rather than parsing each field with a selector, the page is pruned (nav, ads,
-scripts, recommendation carousels removed) and converted to markdown with
-`markdownify` (a custom `<dl>` handler pairs each spec term/value into
-`- **Term:** Value`). Nothing to re-fix when the sites reshuffle their markup,
-and the caller sees every detail the page shows.
+For **Autotrader UK**, detail pages are harvested directly via HTTP SSR JSON hydration (`__staticRouterHydrationData`), returning rich structured data (including the vehicle registration plate, MOT status, and running costs) without consuming a browser session. For all other sites (or as fallback), the page is pruned (nav, ads, scripts, recommendation carousels removed) and converted to markdown with `markdownify` (a custom `<dl>` handler pairs each spec term/value into `- **Term:** Value`). Nothing to re-fix when the sites reshuffle their markup, and the caller sees every detail the page shows.
 
 ### Parameters
 
-| Parameter       | Type    | Required | Description |
-|-----------------|---------|----------|-------------|
-| `url`           | string  | ✅       | Detail page URL from a `search_car_deals` result. Must be on cars.com, autotrader.com, or kbb.com |
-| `includeLinks`  | boolean | ❌       | Keep hyperlink URLs (link text is kept either way; default: `false`) |
-| `includeImages` | boolean | ❌       | Keep image references (default: `false`) |
-| `maxLength`     | integer | ❌       | Truncate markdown at N characters (default: 30000) |
+| Parameter       | Type    | Description |
+|-----------------|---------|-------------|
+| `url`           | string  | **Required.** Listing detail page URL from a `search_car_deals` result. Supported hosts: `cars.com`, `autotrader.com`, `kbb.com`, `autotrader.co.uk`, `motors.co.uk`, `cinch.co.uk`, `ebay.co.uk` (or `ebay.com`) |
+| `includeLinks`  | boolean | Keep hyperlink URLs (link text is kept either way; default: `false`) |
+| `includeImages` | boolean | Keep image references (default: `false`) |
+| `maxLength`     | integer | Truncate markdown at N characters (default: 30000) |
 
 ### Example Response (excerpt)
 
@@ -347,10 +349,40 @@ page, so a call can take ~20-60s.
 - **Protocol**: Implements MCP (Model Context Protocol) via the official Python SDK's lowlevel `Server`
 - **Data extraction**: Source-specific parsers normalize listings into a common `CarListing` dataclass
 - **HTML→Markdown**: `markdownify` (with a custom `<dl>` converter) for the detail tool
+- **Stealth engine**: CloakBrowser downloads and caches patched Chromium (~200 MB under `~/.cache/cloakbrowser`). No local Chrome install or driver configuration is needed.
 
-### CloakBrowser downloads its own Chromium
+---
 
-CloakBrowser downloads its patched Chromium 151 build on first run (~200 MB, cached under `~/.cache/cloakbrowser`). With a license key it stays current; without one it uses the free Chromium 146 build. No system Chrome install is required and `PUPPETEER_EXECUTABLE_PATH`-style env vars do not apply.
+## 🔑 eBay Motors UK (Optional API Credentials)
+
+The `ebay` UK source uses eBay's official **Browse API** when OAuth2
+application credentials are present, and falls back to browser scraping
+`ebay.co.uk` when they are not. The API path returns richer structured data
+and avoids anti-bot checks entirely.
+
+To enable the API path, register an application at the
+[eBay Developer Portal](https://developer.ebay.com), then set the
+`client_id` and `client_secret` (under *Application Keys*) as environment
+variables in the client's `env` block:
+
+```json
+{
+  "mcpServers": {
+    "car-deals": {
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/dan0v/car_deals_search_mcp", "car-deals-mcp", "--country", "UK"],
+      "env": {
+        "EBAY_CLIENT_ID": "your-ebay-client-id",
+        "EBAY_CLIENT_SECRET": "your-ebay-client-secret"
+      }
+    }
+  }
+}
+```
+
+Without these, `ebay` still works via CloakBrowser scraping — just slower and
+more fragile to markup changes. The token is cached in-process (~2h) so
+repeated searches reuse it.
 
 ---
 
@@ -402,45 +434,16 @@ which browser call actually failed) appear at `debug` and above.
 > client's `env` block as above — exporting it in your shell will not reach a
 > client-launched server.
 
-### eBay Motors UK (optional API credentials)
-
-The `ebay` UK source uses eBay's official **Browse API** when OAuth2
-application credentials are present, and falls back to browser scraping
-`ebay.co.uk` when they are not. The API path returns richer structured data
-and avoids anti-bot checks entirely.
-
-To enable the API path, register an application at the
-[eBay Developer Portal](https://developer.ebay.com), then set the
-`client_id` and `client_secret` (under *Application Keys*) as environment
-variables in the client's `env` block:
-
-```json
-{
-  "mcpServers": {
-    "car-deals": {
-      "command": "uvx",
-      "args": ["--from", "git+https://github.com/dan0v/car_deals_search_mcp", "car-deals-mcp", "--country", "UK"],
-      "env": {
-        "EBAY_CLIENT_ID": "your-ebay-client-id",
-        "EBAY_CLIENT_SECRET": "your-ebay-client-secret"
-      }
-    }
-  }
-}
-```
-
-Without these, `ebay` still works via CloakBrowser scraping — just slower and
-more fragile to markup changes. The token is cached in-process (~2h) so
-repeated searches reuse it.
-
 ---
 
 ## 🧪 Development & Testing
 
 ```bash
-uv sync                       # install deps
-just check                    # ruff lint + format check (the offline gate)
-just test                     # live end-to-end test (minutes)
+uv sync                               # install deps
+just check                            # ruff lint + format check + mypy type check (the offline gate)
+just syntax                           # smoke-test all imports
+just test-scraper                     # quick Cars.com scraper smoke test
+just test                             # live end-to-end test (minutes)
 CAR_DEALS_LOG_LEVEL=debug just test   # with server-side debug logging
 ```
 

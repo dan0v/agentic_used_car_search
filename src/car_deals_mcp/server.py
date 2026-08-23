@@ -349,15 +349,270 @@ def _build_handlers(
     return list_tools, call_tool
 
 
+async def execute_search(
+    params: SearchParams,
+    sources: list[str],
+    max_results: int,
+    send_progress: ProgressSender | None,
+    config: Config,
+) -> tuple[list[CarListing], list[ModelSuggestions], list[str], list[str], bool]:
+    skipped_filters: list[str] = []
+    unsupported: set[str] = set()
+    if params.transmission or params.drivetrain:
+        unsupported.add('motors')
+    if params.drivetrain:
+        unsupported.add('ebay')
+    for key in unsupported:
+        if key in sources:
+            skipped_filters.append(key)
+    filtered_sources = [s for s in sources if s not in unsupported]
+    if skipped_filters and not filtered_sources:
+        return [], [], [], skipped_filters, True
+
+    what = f'{params.make} {params.model}'.strip() or 'all cars'
+    logger.info(f'Searching for {what} in {params.zip} ({params.country})')
+    logger.info(f'Sources: {", ".join(filtered_sources)}, Max: {max_results}')
+    if skipped_filters:
+        logger.info(
+            f'Skipped {", ".join(skipped_filters)} (no transmission/drivetrain filter support)'
+        )
+    logger.debug(f'Resolved params: {logger.preview(params)}')
+    if send_progress:
+        send_progress(f'Searching {", ".join(filtered_sources)} for {what}...')
+
+    async def _run_scraper(label: str, fn: SearchScraper) -> dict[str, Any]:
+        logger.info(f'Starting {label} scraper...')
+        started = asyncio.get_running_loop().time()
+
+        def elapsed() -> str:
+            return f'{(asyncio.get_running_loop().time() - started):.1f}s'
+
+        try:
+            result = await fn(params, max_results, send_progress, config)
+            logger.info(f'{label} returned {len(result.listings)} listings')
+            logger.debug(f'{label} finished in {elapsed()} (requested max {max_results})')
+            return {'source': label, 'result': result}
+        except Exception as err:  # noqa: BLE001
+            logger.error(f'{label} error', err)
+            logger.debug(f'{label} failed after {elapsed()}')
+            return {'source': label, 'error': str(err), 'result': ScrapeResult()}
+
+    scraper_map: dict[str, tuple[str, SearchScraper]] = {
+        'cars.com': ('Cars.com', scrape_carscom),
+        'autotrader': ('Autotrader', scrape_autotrader),
+        'kbb': ('KBB', scrape_kbb),
+        'autotrader-uk': ('Autotrader UK', scrape_autotrader_uk),
+        'motors': ('Motors.co.uk', scrape_motors_uk),
+        'cinch': ('Cinch', scrape_cinch),
+        'ebay': ('eBay Motors', scrape_ebay_uk),
+    }
+    tasks = [
+        _run_scraper(label, fn)
+        for key, (label, fn) in scraper_map.items()
+        if key in filtered_sources
+    ]
+    if not tasks:
+        logger.error(f'No known sources selected (got: {logger.preview(filtered_sources)})')
+
+    results = await asyncio.gather(*tasks)
+    logger.info('All scrapers completed')
+
+    suggestions: list[ModelSuggestions] = []
+    all_listings: list[CarListing] = []
+    errors: list[str] = []
+    for result in results:
+        scrape_result: ScrapeResult = result['result']
+        if scrape_result.model_suggestions:
+            suggestions.append(scrape_result.model_suggestions)
+        all_listings.extend(scrape_result.listings)
+        if result.get('error'):
+            errors.append(f'{result["source"]}: {result["error"]}')
+
+    logger.info(f'Total listings: {len(all_listings)}')
+    if send_progress:
+        send_progress(f'Done - found {len(all_listings)} listing(s) total')
+
+    return all_listings, suggestions, errors, skipped_filters, False
+
+
+def format_search_output(
+    params: SearchParams,
+    all_listings: list[CarListing],
+    suggestions: list[ModelSuggestions],
+    errors: list[str],
+    skipped_filters: list[str],
+    is_uk: bool,
+) -> str:
+    currency_symbol = '£' if is_uk else '$'
+    output = '# Car Deals Search Results\n\n'
+    what = f'{params.make} {params.model}'.strip() or 'all cars'
+    output += f'**Search:** {what}'
+    if params.year_min or params.year_max:
+        output += f' ({params.year_min or "any"}-{params.year_max or "any"})'
+    if params.price_max:
+        output += f' | Max Price: {currency_symbol}{params.price_max:,}'
+    if params.mileage_max:
+        output += f' | Max Mileage: {params.mileage_max:,}'
+    if params.transmission:
+        output += f' | {params.transmission.capitalize()}'
+    if params.drivetrain:
+        drive = normalise_drivetrain(params.drivetrain) or params.drivetrain
+        output += f' | {drive}'
+
+    active_filters: list[str] = []
+    if params.one_owner:
+        active_filters.append('1-Owner')
+    if params.no_accidents:
+        active_filters.append('No Accidents')
+    if params.personal_use:
+        active_filters.append('Personal Use')
+    if active_filters:
+        output += f'\n**CarFax Filters:** {", ".join(active_filters)}'
+
+    output += f'\n**Location:** {params.zip}'
+    if params.max_distance is not None:
+        md = params.max_distance
+        output += ' (nationwide)' if md == 0 else f' (within {md} mi)'
+    output += '\n\n'
+
+    if not all_listings:
+        output += 'No listings found.\n'
+        for hint in suggestions:
+            output += (
+                f'\n{hint.source or "Cars.com"} has no {hint.make} model named '
+                f'"{hint.input}". Closest matches:\n'
+            )
+            for opt in hint.options:
+                cnt = f' ({opt.count} listed)' if opt.count else ''
+                output += f'- {opt.name}{cnt}\n'
+            output += '\nRe-run the search with one of these as `model`.\n'
+    else:
+        output += f'Found **{len(all_listings)}** listings:\n\n'
+        for listing in all_listings:
+            output += listing.format() + '\n\n---\n\n'
+
+    if errors:
+        output += '\n**Errors:**\n'
+        for err in errors:
+            output += f'- {err}\n'
+
+    if skipped_filters:
+        output += '\n**Skipped sources:**\n'
+        for key in skipped_filters:
+            output += (
+                f'- `{key}` does not support transmission/drivetrain filtering '
+                '(no API; cards do not surface these fields) and was skipped.\n'
+            )
+
+    return output
+
+
+def format_detail_output(details: DetailResult) -> str:
+    output = f'# {details.title or "Listing Details"}\n\n'
+    output += f'**Source:** {details.source}\n'
+    output += f'**URL:** {details.url}\n\n---\n\n'
+    output += details.markdown
+    return output
+
+
+def format_mot_output(record: MotRecord) -> str:
+    if not record.found:
+        return (
+            f'No MOT record was found for registration "{record.registration}".\n\n'
+            'The vehicle may be unregistered, too new to have an MOT, or '
+            f'the registration may be mistyped.\n\nCheck directly: {record.url}'
+        )
+
+    v = record.vehicle or {}
+    latest = record.latest_test
+    issues = record.outstanding_issues or {}
+
+    output = f'# MOT History: {v.get("makeModel") or record.registration}\n\n'
+    output += f'**Registration:** {v.get("registration") or record.registration}\n'
+    if v.get('colour'):
+        output += f'**Colour:** {v["colour"]}\n'
+    if v.get('fuelType'):
+        output += f'**Fuel:** {v["fuelType"]}\n'
+    if v.get('dateRegistered'):
+        output += f'**First registered:** {v["dateRegistered"]}\n'
+    if record.mot_expiry:
+        output += f'**MOT valid until:** {record.mot_expiry}\n'
+    output += f'**Source:** GOV.UK ({record.url})\n\n'
+
+    output += '## Outstanding Issues\n\n'
+    if latest:
+        result_badge = 'PASS' if str(latest['result']).upper() == 'PASS' else 'FAIL'
+        output += f'**Latest test ({latest.get("date")}):** {result_badge}\n'
+        if latest.get('mileage'):
+            output += f'**Mileage at last test:** {latest["mileage"]}\n'
+    else:
+        output += '**Latest test:** none on record\n'
+
+    open_count = (
+        len(issues.get('dangerous') or [])
+        + len(issues.get('major') or [])
+        + len(issues.get('minor') or [])
+        + len(issues.get('advisories') or [])
+    )
+    if open_count > 0:
+
+        def _section(label: str, items: list[str]) -> None:
+            nonlocal output
+            if not items:
+                return
+            output += f'\n**{label}:**\n'
+            for item in items:
+                output += f'- {item}\n'
+
+        _section(
+            'Dangerous defects (do not drive until repaired)', issues.get('dangerous') or []
+        )
+        _section('Major defects (repair immediately)', issues.get('major') or [])
+        _section('Minor defects (repair soon)', issues.get('minor') or [])
+        _section('Advisories (monitor and repair if necessary)', issues.get('advisories') or [])
+    elif latest:
+        output += '\nNo outstanding defects or advisories recorded at the latest test.\n'
+
+    if issues.get('has_outstanding_recall'):
+        output += '\n## ⚠️ Safety Recall\n\n'
+        for recall in record.recalls:
+            output += f'{recall}\n\n'
+    else:
+        output += '\nNo outstanding safety recalls.\n'
+
+    if record.tests:
+        n = len(record.tests)
+        output += f'\n## Full MOT History ({n} test{"s" if n != 1 else ""})\n\n'
+        for test in record.tests:
+            result = str(test['result']).upper() if test.get('result') else 'UNKNOWN'
+            output += f'### {test.get("date") or "Date unknown"} — {result}\n'
+            if test.get('mileage'):
+                output += f'- Mileage: {test["mileage"]}\n'
+            if test.get('testNumber'):
+                output += f'- Test number: {test["testNumber"]}\n'
+            if test.get('expiryDate'):
+                output += f'- Expiry date: {test["expiryDate"]}\n'
+
+            def _defect_lines(items: list[str]) -> str:
+                return '\n'.join(f'  - {i}' for i in items) if items else ''
+
+            if test.get('dangerous'):
+                output += f'- Dangerous defects:\n{_defect_lines(test["dangerous"])}\n'
+            if test.get('major'):
+                output += f'- Major defects:\n{_defect_lines(test["major"])}\n'
+            if test.get('minor'):
+                output += f'- Minor defects:\n{_defect_lines(test["minor"])}\n'
+            if test.get('advisories'):
+                output += f'- Advisories:\n{_defect_lines(test["advisories"])}\n'
+            output += '\n'
+
+    return output
+
+
 async def _handle_search(
     args: dict[str, Any], send_progress: ProgressSender | None, config: Config
 ) -> types.CallToolResult:
     try:
-        # `country` selects the default source set, the default postcode/ZIP and
-        # the currency symbol shown in the response header. The structure is a
-        # single is_uk branch so a future country can be added as another `elif`
-        # with its own defaults and scraper fan-out, rather than reworking the
-        # handler.
         country = (args.get('country') or config.country or 'US').upper()
         is_uk = country == 'UK'
         params = SearchParams(
@@ -370,43 +625,25 @@ async def _handle_search(
             year_max=args.get('yearMax'),
             price_max=args.get('priceMax'),
             mileage_max=args.get('mileageMax'),
-            # CarFax history filters (US only; UK sources ignore these)
             one_owner=args.get('oneOwner'),
             no_accidents=args.get('noAccidents'),
             personal_use=args.get('personalUse'),
-            # UK-only server-side filters (Autotrader UK only). See schema.
             transmission=args.get('transmission'),
             drivetrain=args.get('drivetrain'),
         )
         max_results = args.get('maxResults') or 10
-        # Default to a single source per country for reliability: cars.com for
-        # US, autotrader-uk for UK. Mirrors the original per-country default.
         default_sources = ['autotrader-uk'] if is_uk else ['cars.com']
         sources = args.get('sources') or default_sources
-        currency_symbol = '£' if is_uk else '$'
 
-        # Motors.co.uk has no API and its cards don't surface transmission/
-        # drivetrain, so applying those filters there would return unfiltered
-        # results that look filtered - the worst kind of false confidence.
-        # Skip it (with a warning in the response footer) rather than run it.
-        # eBay Motors UK surfaces transmission (Browse API `Transmission`
-        # aspect + visible card text) but NOT drivetrain (no stable aspect on
-        # the UK marketplace), so it is skipped only when `drivetrain` is set.
-        # Autotrader UK (GraphQL) and Cinch (REST) both support these filters
-        # server-side via their direct APIs, so they are NOT skipped.
-        skipped_filters: list[str] = []
-        unsupported: set[str] = set()
-        if params.transmission or params.drivetrain:
-            unsupported.add('motors')
-        if params.drivetrain:
-            unsupported.add('ebay')
-        for key in unsupported:
-            if key in sources:
-                skipped_filters.append(key)
-        sources = [s for s in sources if s not in unsupported]
-        if skipped_filters and not sources:
-            # The caller asked only for sources we can't filter - fail loudly
-            # rather than silently broadening to a default source.
+        listings, suggestions, errors, skipped_filters, unsupported_all = await execute_search(
+            params=params,
+            sources=sources,
+            max_results=max_results,
+            send_progress=send_progress,
+            config=config,
+        )
+
+        if unsupported_all:
             return _text_result(
                 'All selected sources were skipped because they do not support '
                 'transmission/drivetrain filtering. Re-run with '
@@ -415,144 +652,12 @@ async def _handle_search(
                 is_error=True,
             )
 
-        what = f'{params.make} {params.model}'.strip() or 'all cars'
-        logger.info(f'Searching for {what} in {params.zip} ({country})')
-        logger.info(f'Sources: {", ".join(sources)}, Max: {max_results}')
-        if skipped_filters:
-            logger.info(
-                f'Skipped {", ".join(skipped_filters)} (no transmission/drivetrain filter support)'
-            )
-        logger.debug(f'Resolved params: {logger.preview(params)}')
-        if send_progress:
-            send_progress(f'Searching {", ".join(sources)} for {what}...')
-
-        # Every source runs the same way; the only differences are the label
-        # and the scraper function. Timing each one matters - the progress
-        # heartbeat exists because these routinely outrun a client timeout.
-        async def _run_scraper(label: str, fn: SearchScraper) -> dict[str, Any]:
-            logger.info(f'Starting {label} scraper...')
-            started = asyncio.get_running_loop().time()
-
-            def elapsed() -> str:
-                return f'{(asyncio.get_running_loop().time() - started):.1f}s'
-
-            try:
-                result = await fn(params, max_results, send_progress, config)
-                logger.info(f'{label} returned {len(result.listings)} listings')
-                logger.debug(f'{label} finished in {elapsed()} (requested max {max_results})')
-                return {'source': label, 'result': result}
-            except Exception as err:  # noqa: BLE001
-                logger.error(f'{label} error', err)
-                logger.debug(f'{label} failed after {elapsed()}')
-                return {'source': label, 'error': str(err), 'result': ScrapeResult()}
-
-        # The key -> (label, scraper) map. The key is what the caller passes
-        # in `sources`; the label is what appears in output and errors.
-        scraper_map: dict[str, tuple[str, SearchScraper]] = {
-            'cars.com': ('Cars.com', scrape_carscom),
-            'autotrader': ('Autotrader', scrape_autotrader),
-            'kbb': ('KBB', scrape_kbb),
-            'autotrader-uk': ('Autotrader UK', scrape_autotrader_uk),
-            'motors': ('Motors.co.uk', scrape_motors_uk),
-            'cinch': ('Cinch', scrape_cinch),
-            'ebay': ('eBay Motors', scrape_ebay_uk),
-        }
-        tasks = [
-            _run_scraper(label, fn) for key, (label, fn) in scraper_map.items() if key in sources
-        ]
-        if not tasks:
-            # No selected key matched a known source.
-            logger.error(f'No known sources selected (got: {logger.preview(sources)})')
-
-        results = await asyncio.gather(*tasks)
-        logger.info('All scrapers completed')
-
-        # A scraper may carry `model_suggestions` when it can prove the model
-        # name does not exist on that site (see suggest_carscom_models).
-        suggestions: list[ModelSuggestions] = []
-        all_listings: list[CarListing] = []
-        errors: list[str] = []
-        for result in results:
-            scrape_result: ScrapeResult = result['result']
-            if scrape_result.model_suggestions:
-                suggestions.append(scrape_result.model_suggestions)
-            all_listings.extend(scrape_result.listings)
-            if result.get('error'):
-                errors.append(f'{result["source"]}: {result["error"]}')
-
-        logger.info(f'Total listings: {len(all_listings)}')
-        if send_progress:
-            send_progress(f'Done - found {len(all_listings)} listing(s) total')
-
-        # Format output - matches the JS byte-for-byte (the test asserts on it).
-        output = '# Car Deals Search Results\n\n'
-        what = f'{params.make} {params.model}'.strip() or 'all cars'
-        output += f'**Search:** {what}'
-        if params.year_min or params.year_max:
-            output += f' ({params.year_min or "any"}-{params.year_max or "any"})'
-        if params.price_max:
-            output += f' | Max Price: {currency_symbol}{params.price_max:,}'
-        if params.mileage_max:
-            output += f' | Max Mileage: {params.mileage_max:,}'
-        if params.transmission:
-            output += f' | {params.transmission.capitalize()}'
-        if params.drivetrain:
-            drive = normalise_drivetrain(params.drivetrain) or params.drivetrain
-            output += f' | {drive}'
-
-        active_filters: list[str] = []
-        if params.one_owner:
-            active_filters.append('1-Owner')
-        if params.no_accidents:
-            active_filters.append('No Accidents')
-        if params.personal_use:
-            active_filters.append('Personal Use')
-        if active_filters:
-            output += f'\n**CarFax Filters:** {", ".join(active_filters)}'
-
-        output += f'\n**Location:** {params.zip}'
-        if params.max_distance is not None:
-            md = params.max_distance
-            output += ' (nationwide)' if md == 0 else f' (within {md} mi)'
-        output += '\n\n'
-
-        if not all_listings:
-            output += 'No listings found.\n'
-            # Without this, an unrecognized model name is indistinguishable from
-            # genuinely empty inventory - both just say "no listings".
-            for hint in suggestions:
-                output += (
-                    f'\n{hint.source or "Cars.com"} has no {hint.make} model named '
-                    f'"{hint.input}". Closest matches:\n'
-                )
-                for opt in hint.options:
-                    cnt = f' ({opt.count} listed)' if opt.count else ''
-                    output += f'- {opt.name}{cnt}\n'
-                output += '\nRe-run the search with one of these as `model`.\n'
-        else:
-            output += f'Found **{len(all_listings)}** listings:\n\n'
-            for listing in all_listings:
-                output += listing.format() + '\n\n---\n\n'
-
-        if errors:
-            output += '\n**Errors:**\n'
-            for err in errors:
-                output += f'- {err}\n'
-
-        if skipped_filters:
-            output += '\n**Skipped sources:**\n'
-            for key in skipped_filters:
-                output += (
-                    f'- `{key}` does not support transmission/drivetrain filtering '
-                    '(no API; cards do not surface these fields) and was skipped.\n'
-                )
-
+        output = format_search_output(
+            params, listings, suggestions, errors, skipped_filters, is_uk
+        )
         logger.trace(f'Response: {logger.preview(output)}')
         return _text_result(output)
     except Exception as error:  # noqa: BLE001
-        # Previously this returned isError to the client and wrote nothing to
-        # stderr, so a failure in argument handling or output formatting was
-        # invisible from the server side.
         logger.error('search_car_deals failed', error)
         return _text_result(f'Error searching for car deals: {error}', is_error=True)
 
@@ -586,11 +691,7 @@ async def _handle_detail(
             f'truncated: {details.truncated}'
         )
 
-        output = f'# {details.title or "Listing Details"}\n\n'
-        output += f'**Source:** {details.source}\n'
-        output += f'**URL:** {details.url}\n\n---\n\n'
-        output += details.markdown
-
+        output = format_detail_output(details)
         logger.trace(f'Response: {logger.preview(output)}')
         return _text_result(output)
     except Exception as error:  # noqa: BLE001
@@ -608,105 +709,12 @@ async def _handle_mot(
             send_progress(f'Checking MOT history for {registration}...')
 
         record: MotRecord = await fetch_mot_history(registration, send_progress, config)
-
-        if not record.found:
-            logger.info(f'No MOT record found for {registration}')
-            return _text_result(
-                f'No MOT record was found for registration "{registration}".\n\n'
-                'The vehicle may be unregistered, too new to have an MOT, or '
-                f'the registration may be mistyped.\n\nCheck directly: {record.url}'
-            )
-
-        v = record.vehicle or {}
-        latest = record.latest_test
-        issues = record.outstanding_issues or {}
-
-        output = f'# MOT History: {v.get("makeModel") or registration}\n\n'
-        output += f'**Registration:** {v.get("registration") or registration}\n'
-        if v.get('colour'):
-            output += f'**Colour:** {v["colour"]}\n'
-        if v.get('fuelType'):
-            output += f'**Fuel:** {v["fuelType"]}\n'
-        if v.get('dateRegistered'):
-            output += f'**First registered:** {v["dateRegistered"]}\n'
-        if record.mot_expiry:
-            output += f'**MOT valid until:** {record.mot_expiry}\n'
-        output += f'**Source:** GOV.UK ({record.url})\n\n'
-
-        # The outstanding-issues summary is the part a buyer actually wants at
-        # the top; the full history follows for reference.
-        output += '## Outstanding Issues\n\n'
-        if latest:
-            result_badge = 'PASS' if str(latest['result']).upper() == 'PASS' else 'FAIL'
-            output += f'**Latest test ({latest.get("date")}):** {result_badge}\n'
-            if latest.get('mileage'):
-                output += f'**Mileage at last test:** {latest["mileage"]}\n'
-        else:
-            output += '**Latest test:** none on record\n'
-
-        open_count = (
-            len(issues.get('dangerous') or [])
-            + len(issues.get('major') or [])
-            + len(issues.get('minor') or [])
-            + len(issues.get('advisories') or [])
-        )
-        if open_count > 0:
-
-            def _section(label: str, items: list[str]) -> None:
-                nonlocal output
-                if not items:
-                    return
-                output += f'\n**{label}:**\n'
-                for item in items:
-                    output += f'- {item}\n'
-
-            _section(
-                'Dangerous defects (do not drive until repaired)', issues.get('dangerous') or []
-            )
-            _section('Major defects (repair immediately)', issues.get('major') or [])
-            _section('Minor defects (repair soon)', issues.get('minor') or [])
-            _section('Advisories (monitor and repair if necessary)', issues.get('advisories') or [])
-        elif latest:
-            output += '\nNo outstanding defects or advisories recorded at the latest test.\n'
-
-        if issues.get('has_outstanding_recall'):
-            output += '\n## ⚠️ Safety Recall\n\n'
-            for recall in record.recalls:
-                output += f'{recall}\n\n'
-        else:
-            output += '\nNo outstanding safety recalls.\n'
-
-        # Full test history, most-recent-first as the page renders it.
-        if record.tests:
-            n = len(record.tests)
-            output += f'\n## Full MOT History ({n} test{"s" if n != 1 else ""})\n\n'
-            for test in record.tests:
-                result = str(test['result']).upper() if test.get('result') else 'UNKNOWN'
-                output += f'### {test.get("date") or "Date unknown"} — {result}\n'
-                if test.get('mileage'):
-                    output += f'- Mileage: {test["mileage"]}\n'
-                if test.get('testNumber'):
-                    output += f'- Test number: {test["testNumber"]}\n'
-                if test.get('expiryDate'):
-                    output += f'- Expiry date: {test["expiryDate"]}\n'
-
-                def _defect_lines(items: list[str]) -> str:
-                    return '\n'.join(f'  - {i}' for i in items) if items else ''
-
-                if test.get('dangerous'):
-                    output += f'- Dangerous defects:\n{_defect_lines(test["dangerous"])}\n'
-                if test.get('major'):
-                    output += f'- Major defects:\n{_defect_lines(test["major"])}\n'
-                if test.get('minor'):
-                    output += f'- Minor defects:\n{_defect_lines(test["minor"])}\n'
-                if test.get('advisories'):
-                    output += f'- Advisories:\n{_defect_lines(test["advisories"])}\n'
-                output += '\n'
+        output = format_mot_output(record)
 
         logger.info(
             f'MOT history returned: {len(record.tests)} test(s), latest '
-            f'{issues.get("latest_result") or "none"}'
-            f'{", outstanding recall" if issues.get("has_outstanding_recall") else ""}'
+            f'{(record.outstanding_issues or {}).get("latest_result") or "none"}'
+            f'{", outstanding recall" if (record.outstanding_issues or {}).get("has_outstanding_recall") else ""}'
         )
         logger.trace(f'Response: {logger.preview(output)}')
         return _text_result(output)

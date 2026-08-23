@@ -91,6 +91,29 @@ uv sync
 }
 ```
 
+### CLI & Agent Skills Usage
+
+All MCP tools are directly available via the `car-deals-mcp` CLI and as an AI agent Skill (`SKILL.md` / `skills/car-deals/SKILL.md`):
+
+```bash
+# 1. Search car deals (US or UK)
+uv run car-deals-mcp search --make Toyota --model Camry --price-max 25000
+uv run car-deals-mcp search --country UK --make BMW --model "3 Series" --transmission Automatic
+
+# 2. Get full listing details as Markdown or JSON
+uv run car-deals-mcp detail "https://www.cars.com/vehicledetail/..."
+uv run car-deals-mcp detail --json "https://www.autotrader.co.uk/car-details/..."
+
+# 3. Check UK vehicle MOT history & safety recalls
+uv run car-deals-mcp mot "YL08 NNV"
+uv run car-deals-mcp mot YL08NNV --json
+
+# 4. Run MCP stdio server
+uv run car-deals-mcp serve --country UK
+```
+
+See [SKILL.md](SKILL.md) for full parameter references and AI agent integration instructions.
+
 ### Testing Standalone
 
 ```bash

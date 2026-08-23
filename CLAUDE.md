@@ -73,10 +73,11 @@ A `scrapers/` package holds one module per site plus shared helpers;
 
 ```
 src/car_deals_mcp/
+  cli.py               CLI entry & subcommands (search, detail, mot, serve)
   server.py            MCP protocol layer (lowlevel Server, three tools)
   logger.py            leveled stderr logging
   types.py             CarListing, SearchParams, ScrapeResult, MotRecord, ...
-  __main__.py          CLI entry (argparse for --country / --cloakbrowser-key)
+  __main__.py          CLI entry (dispatches to cli.main)
   scrapers/
     __init__.py        public re-exports (scrape_carscom, fetch_mot_history, ...)
     _base.py           shared helpers: carscom_slug, parse_*, apply_uk_filters,

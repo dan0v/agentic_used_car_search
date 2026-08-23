@@ -541,8 +541,15 @@ def format_mot_output(record: MotRecord) -> str:
 
     output += '## Outstanding Issues\n\n'
     if latest:
-        result_badge = 'PASS' if str(latest['result']).upper() == 'PASS' else 'FAIL'
-        output += f'**Latest test ({latest.get("date")}):** {result_badge}\n'
+        raw_res = str(latest.get('result') or '').strip().upper()
+        if 'PASS' in raw_res:
+            result_badge = 'PASS'
+        elif 'FAIL' in raw_res:
+            result_badge = 'FAIL'
+        else:
+            result_badge = raw_res or 'UNKNOWN'
+        test_date = latest.get('date') or 'Date unknown'
+        output += f'**Latest test ({test_date}):** {result_badge}\n'
         if latest.get('mileage'):
             output += f'**Mileage at last test:** {latest["mileage"]}\n'
     else:
@@ -584,7 +591,13 @@ def format_mot_output(record: MotRecord) -> str:
         n = len(record.tests)
         output += f'\n## Full MOT History ({n} test{"s" if n != 1 else ""})\n\n'
         for test in record.tests:
-            result = str(test['result']).upper() if test.get('result') else 'UNKNOWN'
+            raw_r = str(test.get('result') or '').strip().upper()
+            if 'PASS' in raw_r:
+                result = 'PASS'
+            elif 'FAIL' in raw_r:
+                result = 'FAIL'
+            else:
+                result = raw_r or 'UNKNOWN'
             output += f'### {test.get("date") or "Date unknown"} — {result}\n'
             if test.get('mileage'):
                 output += f'- Mileage: {test["mileage"]}\n'

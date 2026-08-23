@@ -38,8 +38,8 @@ MOT_HOST: Final[str] = 'www.check-mot.service.gov.uk'
 
 _EXTRACT_MOT_JS: Final[str] = r"""
 () => {
-    const text = (sel) => {
-        const el = document.querySelector(sel);
+    const text = (sel, root = document) => {
+        const el = root.querySelector(sel);
         return el ? el.innerText.trim() : null;
     };
     // A registration the service has no record for lands on a page with no
@@ -57,52 +57,83 @@ _EXTRACT_MOT_JS: Final[str] = r"""
         motExpiry: text('[data-test-id="mot-due-date"]')
     };
 
-    // Each test is a [data-test-id="test-history-item"] row. Defects sit in the
-    // same row under labelled bullet lists; the severity headings are bounded
-    // literals (the service's own wording) - a loose pattern would sweep up the
-    // definition details-text below each list.
+    // Each test is a [data-test-id="test-history-item"] row or an accordion section.
     const tests = [];
-    const testRows = document.querySelectorAll('[data-test-id="test-history-item"]');
-    testRows.forEach(row => {
-        const read = (sel) => {
-            const el = row.querySelector(sel);
-            return el ? el.innerText.trim() : null;
-        };
-        // The date has no data-test-id; it is the first .govuk-heading-s inside
-        // the date/result column. Scope to avoid matching the test-number heading.
-        const dateCol = row.querySelector('.govuk-grid-column-one-third');
-        const dateEl = dateCol ? dateCol.querySelector('.govuk-heading-s') : null;
+    let testRows = Array.from(document.querySelectorAll('[data-test-id="test-history-item"]'));
+    if (!testRows.length) {
+        testRows = Array.from(document.querySelectorAll('.govuk-accordion__section, [data-test-id*="test-history"]'));
+    }
 
-        const collect = (headingSel) => {
-            const heading = row.querySelector(headingSel);
+    testRows.forEach(row => {
+        const read = (sel) => text(sel, row);
+
+        let date = null;
+        const dateMatch = row.innerText.match(/\b(\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4})\b/i);
+        if (dateMatch) {
+            date = dateMatch[1];
+        } else {
+            const dateCol = row.querySelector('.govuk-grid-column-one-third, .govuk-grid-column-two-thirds, dt');
+            const dateEl = dateCol ? dateCol.querySelector('.govuk-heading-s, .govuk-heading-m, h3, h4, span') : null;
+            date = dateEl ? dateEl.innerText.trim() : null;
+        }
+
+        let rawResult = read('[data-test-id="test-result"]') || read('[data-test-id*="result"]') || read('.govuk-tag');
+        if (!rawResult) {
+            const resMatch = row.innerText.match(/\b(PASSED|FAILED|PASS|FAIL)\b/i);
+            if (resMatch) rawResult = resMatch[1];
+        }
+        let result = null;
+        if (rawResult) {
+            if (/pass/i.test(rawResult)) result = 'PASS';
+            else if (/fail/i.test(rawResult)) result = 'FAIL';
+            else result = rawResult.trim().toUpperCase();
+        }
+
+        let mileage = read('[data-test-id="test-history-odometer"]');
+        if (!mileage) {
+            const mMatch = row.innerText.match(/\b([\d,]+\s*(?:miles|km))\b/i);
+            if (mMatch) mileage = mMatch[1];
+        }
+
+        let testNumber = read('[data-test-id="test-number"]');
+        if (!testNumber) {
+            const tnMatch = row.innerText.match(/\b(\d{4}\s*\d{4}\s*\d{4})\b/);
+            if (tnMatch) testNumber = tnMatch[1];
+        }
+
+        const collect = (headingSel, fallbackText) => {
+            let heading = row.querySelector(headingSel);
+            if (!heading && fallbackText) {
+                const headings = Array.from(row.querySelectorAll('h3, h4, strong, p, dt, div'));
+                heading = headings.find(h => h.innerText.toLowerCase().includes(fallbackText.toLowerCase()));
+            }
             if (!heading) return [];
-            const wrapper = heading.parentElement;
-            const list = wrapper ? wrapper.querySelector('ul.govuk-list--bullet, ul') : null;
+            const wrapper = heading.parentElement || row;
+            const list = wrapper.querySelector('ul.govuk-list--bullet, ul');
             if (!list) return [];
             return Array.from(list.querySelectorAll('li'))
                 .map(li => li.innerText.trim()).filter(Boolean);
         };
 
         tests.push({
-            date: dateEl ? dateEl.innerText.trim() : null,
-            result: read('[data-test-id="test-result"]'),
-            mileage: read('[data-test-id="test-history-odometer"]'),
-            testNumber: read('[data-test-id="test-number"]'),
+            date,
+            result,
+            mileage,
+            testNumber,
             expiryDate: read('[data-test-id="expiry-date"]'),
-            dangerous: collect('[data-test-id="dangerous-defect-items-heading"]'),
-            major: collect('[data-test-id="major-defect-items-heading"]'),
-            minor: collect('[data-test-id="minor-defect-items-heading"]'),
-            advisories: collect('[data-test-id="advisory-defect-comments-heading"]')
+            dangerous: collect('[data-test-id="dangerous-defect-items-heading"]', 'dangerous'),
+            major: collect('[data-test-id="major-defect-items-heading"]', 'major'),
+            minor: collect('[data-test-id="minor-defect-items-heading"]', 'minor'),
+            advisories: collect('[data-test-id="advisory-defect-comments-heading"]', 'advisories')
         });
     });
 
     // The recalls section is rendered server-side for vehicles with an active
-    // recall, and absent otherwise. The inset text carries the manufacturer and
-    // the "arrange a free repair" instruction.
+    // recall, and absent otherwise.
     const recalls = [];
-    const recallBlock = document.querySelector('[data-test-id="recall-success-results"]');
+    const recallBlock = document.querySelector('[data-test-id="recall-success-results"], [data-test-id*="recall"]');
     if (recallBlock) {
-        const inset = recallBlock.querySelector('.govuk-inset-text');
+        const inset = recallBlock.querySelector('.govuk-inset-text, p');
         if (inset) recalls.push(inset.innerText.trim().replace(/\s+/g, ' '));
     }
     return { found: true, vehicle, tests, recalls };

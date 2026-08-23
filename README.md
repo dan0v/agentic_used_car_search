@@ -1,12 +1,27 @@
-# Car Deals Search MCP
+# Car Deals Search: MCP & Agent Skill
 
 > **Search used car listings from Cars.com, Autotrader, and KBB (US) or Autotrader UK, Motors.co.uk, Cinch, and eBay Motors (UK) with AI assistants — plus UK MOT history checks**
 
-An MCP (Model Context Protocol) server that aggregates and searches car listings from multiple sources across the US and UK. Scrapes listings in parallel, extracts price, mileage, dealer info, and applies optional CARFAX-style filters (1-owner, no accidents, personal use) for US sources. UK listings return title, price (GBP), mileage, and location/distance where available. A dedicated `check_mot_history` tool pulls a UK vehicle's MOT history from the GOV.UK service and surfaces any outstanding defects and safety recalls.
+A dual-interface tool providing **first-class support for both MCP and Agent Skill workflows**:
+- 🔌 **MCP Server**: Connect directly to MCP-enabled clients (Claude Desktop, Claude Code, Cursor, VS Code Copilot).
+- 🧠 **Agent Skill & CLI**: Drive autonomous agents (Odysseus, OpenCode, subagents, or bash scripts) using `SKILL.md` and CLI subcommands with human-readable Markdown or structured JSON output.
 
-This is the **Python port**: `uv`/`uvx` runner, [CloakBrowser](https://github.com/cloakbrowser/cloakbrowser) for stealth browsing, the official [Python MCP SDK](https://github.com/modelcontextprotocol/python-sdk).
+Aggregates and searches car listings from multiple sources across the US and UK in parallel, extracts prices, specs, mileage, and dealer ratings, applies optional CARFAX-style filters (1-owner, no accidents, personal use) for US sources, and checks vehicle MOT history & active safety recalls from GOV.UK.
+
+Powered by **Python 3.11+**, `uv`/`uvx`, [CloakBrowser](https://github.com/cloakbrowser/cloakbrowser) stealth browsing, and the official [Python MCP SDK](https://github.com/modelcontextprotocol/python-sdk).
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+---
+
+## ⚡ Two First-Class Workflows
+
+Choose the integration method that best suits your environment:
+
+| Workflow | Best For | Entry Point | Output Formats |
+|---|---|---|---|
+| **MCP Server** | Claude Desktop, Claude Code, Cursor, VS Code | `car-deals-mcp serve` or `car-deals-mcp` (stdio) | MCP tool call results |
+| **Agent Skill & CLI** | Odysseus, OpenCode, autonomous agents, terminal scripts | `car-deals-mcp <search\|detail\|mot>` / [SKILL.md](SKILL.md) | Formatted Markdown or structured JSON (`--json`) |
 
 ---
 
@@ -18,9 +33,33 @@ This is the **Python port**: `uv`/`uvx` runner, [CloakBrowser](https://github.co
 - **[uv](https://github.com/astral-sh/uv)** installed (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
 - No Chrome install needed — CloakBrowser downloads its patched Chromium 151 build on first run (~200 MB, cached).
 
-### Add to your MCP client (recommended)
+---
 
-No clone, no install. Add this to your client's MCP config and restart it — `uvx` fetches and runs the server on first launch:
+### Option A: Agent Skill & CLI Workflow
+
+Use this for agent frameworks (e.g. Odysseus, OpenCode), autonomous background tasks, or direct terminal usage.
+
+```bash
+# 1. Search car deals (US or UK)
+uv run car-deals-mcp search --make Toyota --model Camry --price-max 25000
+uv run car-deals-mcp search --country UK --make BMW --model "3 Series" --transmission Automatic
+
+# 2. Get full listing details as Markdown or JSON
+uv run car-deals-mcp detail "https://www.cars.com/vehicledetail/..."
+uv run car-deals-mcp detail --json "https://www.autotrader.co.uk/car-details/..."
+
+# 3. Check UK vehicle MOT history & safety recalls
+uv run car-deals-mcp mot "KU16 YSC"
+uv run car-deals-mcp mot KU16YSC --json
+```
+
+See [SKILL.md](SKILL.md) (or `skills/car-deals/SKILL.md`) for complete parameter specifications, JSON schemas, and agent prompting recipes.
+
+---
+
+### Option B: MCP Server Workflow
+
+Add the server to your MCP client config to expose `search_car_deals`, `get_listing_details`, and `check_mot_history` as interactive tools:
 
 ```json
 {
@@ -70,7 +109,7 @@ echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":
 
 You should see `Car Deals MCP Server running on stdio` on stderr followed by a JSON result naming `car-deals-mcp` on stdout.
 
-### Run from a local clone instead
+### Run MCP from a local clone instead
 
 Use this if you want to modify the scrapers — edits take effect on the next client restart, with no `uvx` cache in the way:
 
@@ -90,29 +129,6 @@ uv sync
   }
 }
 ```
-
-### CLI & Agent Skills Usage
-
-All MCP tools are directly available via the `car-deals-mcp` CLI and as an AI agent Skill (`SKILL.md` / `skills/car-deals/SKILL.md`):
-
-```bash
-# 1. Search car deals (US or UK)
-uv run car-deals-mcp search --make Toyota --model Camry --price-max 25000
-uv run car-deals-mcp search --country UK --make BMW --model "3 Series" --transmission Automatic
-
-# 2. Get full listing details as Markdown or JSON
-uv run car-deals-mcp detail "https://www.cars.com/vehicledetail/..."
-uv run car-deals-mcp detail --json "https://www.autotrader.co.uk/car-details/..."
-
-# 3. Check UK vehicle MOT history & safety recalls
-uv run car-deals-mcp mot "YL08 NNV"
-uv run car-deals-mcp mot YL08NNV --json
-
-# 4. Run MCP stdio server
-uv run car-deals-mcp serve --country UK
-```
-
-See [SKILL.md](SKILL.md) for full parameter references and AI agent integration instructions.
 
 ### Testing Standalone
 

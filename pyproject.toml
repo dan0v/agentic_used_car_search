@@ -1,7 +1,7 @@
 [project]
 name = "car-deals-mcp"
 version = "1.0.0"
-description = "MCP server that searches used car listings (US + UK) and checks UK MOT history"
+description = "Search used car listings (US + UK) and UK MOT history with AI assistants via MCP server or CLI / Agent Skills."
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"

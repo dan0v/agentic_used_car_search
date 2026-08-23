@@ -3,9 +3,14 @@ name: car-deals
 description: Search for used car listings across US and UK car marketplaces (Cars.com, Autotrader US/UK, KBB, Motors.co.uk, Cinch, eBay Motors), inspect full listing details, and check UK MOT vehicle history via CLI.
 ---
 
-# Car Deals Search Skill
+# Car Deals Search Skill (Agent CLI & MCP)
 
-Use this skill to search for used car deals across major US and UK automotive marketplaces, inspect detailed vehicle specifications and seller notes from listing URLs, and verify UK MOT histories and safety recalls via the `car-deals-mcp` CLI.
+This project provides **first-class support for both AI Agent Skills (CLI) and MCP (Model Context Protocol)**. Use this skill in autonomous agent workflows (e.g. Odysseus, OpenCode, subagents) or scripts to search for used car deals across major US and UK automotive marketplaces, inspect detailed vehicle specifications and seller notes from listing URLs, and verify UK MOT histories and safety recalls.
+
+## Dual Workflows
+
+- **Agent Skill / CLI**: Run `car-deals-mcp <search|detail|mot>` directly for instant terminal or subprocess execution with Markdown or structured `--json` output.
+- **MCP Server**: Run `car-deals-mcp serve` (or `car-deals-mcp --country <US|UK>`) over stdio for MCP protocol clients.
 
 ## CLI Invocation
 

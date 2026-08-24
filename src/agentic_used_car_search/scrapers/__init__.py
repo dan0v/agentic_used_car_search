@@ -15,7 +15,7 @@ Playwright Python runs them in the browser, so they cannot be rewritten in
 Python. See CLAUDE.md and docs/SITE_APIS.md.
 
 This package re-exports the public surface that `server.py` and tests import, so
-`from car_deals_mcp.scrapers import scrape_carscom` works without callers
+`from agentic_used_car_search.scrapers import scrape_carscom` works without callers
 needing to know the per-site module layout.
 """
 

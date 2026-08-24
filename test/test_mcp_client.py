@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """End-to-end MCP client test.
 
-Spawns the car-deals-mcp server as a real MCP server subprocess and drives it
+Spawns the agentic-used-car-search server as a real MCP server subprocess and drives it
 with the official MCP SDK client over stdio - no protocol details faked out.
 Verifies: tool discovery, input schema shape, and a live search call against
 Cars.com.
@@ -23,7 +23,7 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 # Make the package importable for the offline slug check (the server subprocess
 # is run via `uv run`, but the slug assertion is in-process).
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src'))
-from car_deals_mcp.scrapers import carscom_slug  # noqa: E402
+from agentic_used_car_search.scrapers import carscom_slug  # noqa: E402
 
 
 def assert_match(text: str, pattern: str, msg: str = '') -> None:
@@ -79,7 +79,7 @@ async def main() -> None:
     # Run the server from the project so the installed package resolves.
     params = StdioServerParameters(
         command='python',
-        args=['-m', 'car_deals_mcp'],
+        args=['-m', 'agentic_used_car_search'],
         env=env,
         cwd=str(Path(__file__).resolve().parent.parent),
     )
@@ -174,7 +174,7 @@ async def main() -> None:
             assert len(result.content) == 1
             assert result.content[0].type == 'text'
             text = result.content[0].text
-            assert_match(text, r'# Car Deals Search Results')
+            assert_match(text, r'# Agentic Used Car Search Results')
             assert_match(text, r'\*\*Search:\*\* Toyota Camry')
             assert_no_match(
                 text,

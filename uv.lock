@@ -117,7 +117,7 @@ wheels = [
 ]
 
 [[package]]
-name = "car-deals-mcp"
+name = "agentic-used-car-search"
 version = "1.0.0"
 source = { editable = "." }
 dependencies = [

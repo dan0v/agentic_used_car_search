@@ -27,15 +27,15 @@ the live sites change, which is intentional (see below).
 Drive the server by hand:
 
 ```bash
-echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"probe","version":"1"}}}' | uv run car-deals-mcp
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"probe","version":"1"}}}' | uv run agentic-used-car-search
 ```
 
 ## Runner: `uv` / `uvx`
 
 `uv` is the env/package manager and runner; `uvx` is the `npx` equivalent
-(ephemeral, cached). Production runs via `uvx --from git+... car-deals-mcp`.
+(ephemeral, cached). Production runs via `uvx --from git+... agentic-used-car-search`.
 Dev runs via `uv run`. The package uses a `src/` layout so `uvx` can install it
-as a console script (`car-deals-mcp = car_deals_mcp.__main__:main`).
+as a console script (`agentic-used-car-search = agentic_used_car_search.__main__:main`).
 
 ### Startup args (the production launch contract)
 
@@ -60,19 +60,19 @@ Additional CLI flags:
 
 Example production invocation:
 ```
-uvx --from git+https://github.com/dan0v/car_deals_search_mcp car-deals-mcp --country UK --cloakbrowser-key cb_xxxxxxxx
+uvx --from git+https://github.com/dan0v/agentic_used_car_search agentic-used-car-search --country UK --cloakbrowser-key cb_xxxxxxxx
 ```
 
 ## Architecture
 
 A `scrapers/` package holds one module per site plus shared helpers;
-`src/car_deals_mcp/server.py` is the MCP protocol layer;
-`src/car_deals_mcp/logger.py` is leveled stderr logging that both import.
+`src/agentic_used_car_search/server.py` is the MCP protocol layer;
+`src/agentic_used_car_search/logger.py` is leveled stderr logging that both import.
 `__main__.py` is the CLI entry (argparse for the startup args, then
 `server.run()`).
 
 ```
-src/car_deals_mcp/
+src/agentic_used_car_search/
   cli.py               CLI entry & subcommands (search, detail, mot, serve)
   server.py            MCP protocol layer (lowlevel Server, three tools)
   logger.py            leveled stderr logging
@@ -122,7 +122,7 @@ from the package but unused by the server. Shared helpers (slug rules,
 parse_*, accept_consent, apply_uk_filters, normalise_drivetrain,
 is_uk_registration, browser launch, start_heartbeat, the `scrape` browser
 skeleton, wait_out_interstitial) live in `_base.py`; the package `__init__.py`
-re-exports the public surface so callers import from `car_deals_mcp.scrapers`.
+re-exports the public surface so callers import from `agentic_used_car_search.scrapers`.
 
 ### Two transport strategies, one package
 
@@ -231,7 +231,7 @@ the scraper.
 
 ### Logging
 
-`src/car_deals_mcp/logger.py` — levels `silent` < `error` < `info` < `debug` <
+`src/agentic_used_car_search/logger.py` — levels `silent` < `error` < `info` < `debug` <
 `trace`, selected by `CAR_DEALS_LOG_LEVEL` (wins) or `--verbose` / `--trace` in
 argv. Unlike `send_progress`, the logger is imported directly rather than
 threaded through, so it is always available and needs no null-guard.

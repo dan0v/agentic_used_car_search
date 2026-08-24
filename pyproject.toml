@@ -1,12 +1,12 @@
 [project]
-name = "car-deals-mcp"
+name = "agentic-used-car-search"
 version = "1.0.0"
 description = "Search used car listings (US + UK) and UK MOT history with AI assistants via MCP server or CLI / Agent Skills."
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"
 authors = [{ name = "dan0v" }]
-keywords = ["mcp", "car-deals", "scraper", "cars.com", "autotrader", "kbb", "uk", "mot"]
+keywords = ["mcp", "agentic-used-car-search", "car-deals", "scraper", "cars.com", "autotrader", "kbb", "uk", "mot"]
 classifiers = ["License :: OSI Approved :: MIT License"]
 dependencies = [
     "cloakbrowser",
@@ -22,16 +22,16 @@ dependencies = [
     "httpx>=0.27",
 ]
 
-# The uvx-able console entry. `uvx --from git+... car-deals-mcp` runs this.
+# The uvx-able console entry. `uvx --from git+... agentic-used-car-search` runs this.
 [project.scripts]
-car-deals-mcp = "car_deals_mcp.__main__:main"
+agentic-used-car-search = "agentic_used_car_search.__main__:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/car_deals_mcp"]
+packages = ["src/agentic_used_car_search"]
 
 [dependency-groups]
 dev = [
@@ -86,9 +86,9 @@ ignore_missing_imports = true
 # scraper's browser-interaction surface loose rather than fighting Playwright's
 # incomplete stubs.
 [[tool.mypy.overrides]]
-module = ["car_deals_mcp.scrapers.*"]
+module = ["agentic_used_car_search.scrapers.*"]
 disable_error_code = ["arg-type", "attr-defined", "call-arg", "index", "no-any-return", "operator", "return-value", "union-attr"]
 
 [[tool.mypy.overrides]]
-module = ["car_deals_mcp.server"]
+module = ["agentic_used_car_search.server"]
 disable_error_code = ["no-any-return", "arg-type", "call-arg", "attr-defined"]

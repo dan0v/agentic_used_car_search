@@ -1,4 +1,4 @@
-# Car Deals Search: MCP & Agent Skill
+# Agentic Used Car Search: MCP & Agent Skill
 
 > **Search used car listings from Cars.com, Autotrader, and KBB (US) or Autotrader UK, Motors.co.uk, Cinch, and eBay Motors (UK) with AI assistants — plus UK MOT history checks**
 
@@ -20,8 +20,8 @@ Choose the integration method that best suits your environment:
 
 | Workflow | Best For | Entry Point | Output Formats |
 |---|---|---|---|
-| **MCP Server** | Claude Desktop, Claude Code, Cursor, VS Code | `car-deals-mcp serve` or `car-deals-mcp` (stdio) | MCP tool call results |
-| **Agent Skill & CLI** | Odysseus, OpenCode, autonomous agents, terminal scripts | `car-deals-mcp <search\|detail\|mot>` / [SKILL.md](SKILL.md) | Formatted Markdown or structured JSON (`--json`) |
+| **MCP Server** | Claude Desktop, Claude Code, Cursor, VS Code | `agentic-used-car-search serve` or `agentic-used-car-search` (stdio) | MCP tool call results |
+| **Agent Skill & CLI** | Odysseus, OpenCode, autonomous agents, terminal scripts | `agentic-used-car-search <search\|detail\|mot>` / [SKILL.md](SKILL.md) | Formatted Markdown or structured JSON (`--json`) |
 
 ---
 
@@ -41,19 +41,19 @@ Use this for agent frameworks (e.g. Odysseus, OpenCode), autonomous background t
 
 ```bash
 # 1. Search car deals (US or UK)
-uv run car-deals-mcp search --make Toyota --model Camry --price-max 25000
-uv run car-deals-mcp search --country UK --make BMW --model "3 Series" --transmission Automatic
+uv run agentic-used-car-search search --make Toyota --model Camry --price-max 25000
+uv run agentic-used-car-search search --country UK --make BMW --model "3 Series" --transmission Automatic
 
 # 2. Get full listing details as Markdown or JSON
-uv run car-deals-mcp detail "https://www.cars.com/vehicledetail/..."
-uv run car-deals-mcp detail --json "https://www.autotrader.co.uk/car-details/..."
+uv run agentic-used-car-search detail "https://www.cars.com/vehicledetail/..."
+uv run agentic-used-car-search detail --json "https://www.autotrader.co.uk/car-details/..."
 
 # 3. Check UK vehicle MOT history & safety recalls
-uv run car-deals-mcp mot "KU16 YSC"
-uv run car-deals-mcp mot KU16YSC --json
+uv run agentic-used-car-search mot "KU16 YSC"
+uv run agentic-used-car-search mot KU16YSC --json
 ```
 
-See [SKILL.md](SKILL.md) (or `skills/car-deals/SKILL.md`) for complete parameter specifications, JSON schemas, and agent prompting recipes.
+See [SKILL.md](SKILL.md) (or `skills/agentic-used-car-search/SKILL.md`) for complete parameter specifications, JSON schemas, and agent prompting recipes.
 
 ---
 
@@ -64,12 +64,12 @@ Add the server to your MCP client config to expose `search_car_deals`, `get_list
 ```json
 {
   "mcpServers": {
-    "car-deals": {
+    "agentic-used-car-search": {
       "command": "uvx",
       "args": [
         "--from",
-        "git+https://github.com/dan0v/car_deals_search_mcp",
-        "car-deals-mcp",
+        "git+https://github.com/dan0v/agentic_used_car_search",
+        "agentic-used-car-search",
         "--country",
         "UK",
         "--cloakbrowser-key",
@@ -104,27 +104,27 @@ Verify it works without any client:
 
 ```bash
 echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"probe","version":"1"}}}' \
-  | uvx --from git+https://github.com/dan0v/car_deals_search_mcp car-deals-mcp --country US
+  | uvx --from git+https://github.com/dan0v/agentic_used_car_search agentic-used-car-search --country US
 ```
 
-You should see `Car Deals MCP Server running on stdio` on stderr followed by a JSON result naming `car-deals-mcp` on stdout.
+You should see `Agentic Used Car Search MCP Server running on stdio` on stderr followed by a JSON result naming `agentic-used-car-search` on stdout.
 
 ### Run MCP from a local clone instead
 
 Use this if you want to modify the scrapers — edits take effect on the next client restart, with no `uvx` cache in the way:
 
 ```bash
-git clone https://github.com/dan0v/car_deals_search_mcp.git
-cd car_deals_search_mcp
+git clone https://github.com/dan0v/agentic_used_car_search.git
+cd agentic_used_car_search
 uv sync
 ```
 
 ```json
 {
   "mcpServers": {
-    "car-deals": {
+    "agentic-used-car-search": {
       "command": "uv",
-      "args": ["run", "--directory", "/absolute/path/to/car_deals_search_mcp", "car-deals-mcp", "--country", "US"]
+      "args": ["run", "--directory", "/absolute/path/to/agentic_used_car_search", "agentic-used-car-search", "--country", "US"]
     }
   }
 }
@@ -139,19 +139,19 @@ uv run python test/test_mcp_client.py
 # Quick scraper smoke test
 just test-scraper
 # ...or by hand
-uv run python -c "import asyncio; from car_deals_mcp.scrapers import scrape_carscom; \
-  from car_deals_mcp.types import SearchParams; \
+uv run python -c "import asyncio; from agentic_used_car_search.scrapers import scrape_carscom; \
+  from agentic_used_car_search.types import SearchParams; \
   r = asyncio.run(scrape_carscom(SearchParams(make='Toyota', model='Camry', one_owner=True), 5)); \
   [print(l.format()) for l in r.listings]"
 
 # A UK search
-uv run python -c "import asyncio; from car_deals_mcp.scrapers import scrape_autotrader_uk; \
-  from car_deals_mcp.types import SearchParams; \
+uv run python -c "import asyncio; from agentic_used_car_search.scrapers import scrape_autotrader_uk; \
+  from agentic_used_car_search.types import SearchParams; \
   r = asyncio.run(scrape_autotrader_uk(SearchParams(make='Toyota', model='Corolla', zip='SW1A 1AA', price_max=15000), 5)); \
   [print(l.format()) for l in r.listings]"
 
 # A UK MOT history check
-uv run python -c "import asyncio, json; from car_deals_mcp.scrapers import fetch_mot_history; \
+uv run python -c "import asyncio, json; from agentic_used_car_search.scrapers import fetch_mot_history; \
   r = asyncio.run(fetch_mot_history('YL08 NNV')); print(json.dumps(r.outstanding_issues, indent=2))"
 ```
 
@@ -407,9 +407,9 @@ variables in the client's `env` block:
 ```json
 {
   "mcpServers": {
-    "car-deals": {
+    "agentic-used-car-search": {
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/dan0v/car_deals_search_mcp", "car-deals-mcp", "--country", "UK"],
+      "args": ["--from", "git+https://github.com/dan0v/agentic_used_car_search", "agentic-used-car-search", "--country", "UK"],
       "env": {
         "EBAY_CLIENT_ID": "your-ebay-client-id",
         "EBAY_CLIENT_SECRET": "your-ebay-client-secret"
@@ -445,9 +445,9 @@ environment variable wins when both are given.
 ```json
 {
   "mcpServers": {
-    "car-deals": {
+    "agentic-used-car-search": {
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/dan0v/car_deals_search_mcp", "car-deals-mcp", "--country", "US"],
+      "args": ["--from", "git+https://github.com/dan0v/agentic_used_car_search", "agentic-used-car-search", "--country", "US"],
       "env": {
         "CAR_DEALS_LOG_LEVEL": "debug"
       }
@@ -459,8 +459,8 @@ environment variable wins when both are given.
 Running it directly:
 
 ```bash
-CAR_DEALS_LOG_LEVEL=debug uv run car-deals-mcp
-uv run car-deals-mcp --verbose
+CAR_DEALS_LOG_LEVEL=debug uv run agentic-used-car-search
+uv run agentic-used-car-search --verbose
 ```
 
 Every exception the server hits is written to stderr, including ones that are
@@ -511,6 +511,6 @@ MIT License - see [LICENSE](LICENSE) file for details
 
 ## 🔗 Links
 
-- **Repository**: https://github.com/dan0v/car_deals_search_mcp
-- **Issues**: https://github.com/dan0v/car_deals_search_mcp/issues
+- **Repository**: https://github.com/dan0v/agentic_used_car_search
+- **Issues**: https://github.com/dan0v/agentic_used_car_search/issues
 - **MCP Protocol**: https://modelcontextprotocol.io

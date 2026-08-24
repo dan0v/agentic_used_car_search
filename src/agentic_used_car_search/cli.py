@@ -1,4 +1,4 @@
-"""Command-line interface for car-deals-mcp.
+"""Command-line interface for agentic-used-car-search.
 
 Exposes all MCP tools as CLI commands (search, detail, mot, serve) for direct
 use in AI agent skills (e.g. Odysseus) or standalone shell execution.
@@ -28,8 +28,8 @@ def _loop_factory() -> asyncio.AbstractEventLoop:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog='car-deals-mcp',
-        description='Car Deals Search CLI & MCP Server (US + UK car listings, details, and UK MOT history).',
+        prog='agentic-used-car-search',
+        description='Agentic Used Car Search CLI & MCP Server (US + UK car listings, details, and UK MOT history).',
     )
     parser.add_argument(
         '--country',

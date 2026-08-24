@@ -47,7 +47,7 @@ from .types import (
 
 install_global_handlers()
 
-SERVER_NAME = 'car-deals-mcp'
+SERVER_NAME = 'agentic-used-car-search'
 SERVER_VERSION = '1.0.0'
 
 # A search scraper: takes (params, max_results, send_progress, config) and
@@ -444,7 +444,7 @@ def format_search_output(
     is_uk: bool,
 ) -> str:
     currency_symbol = '£' if is_uk else '$'
-    output = '# Car Deals Search Results\n\n'
+    output = '# Agentic Used Car Search Results\n\n'
     what = f'{params.make} {params.model}'.strip() or 'all cars'
     output += f'**Search:** {what}'
     if params.year_min or params.year_max:
@@ -777,7 +777,7 @@ async def _serve(config: Config) -> None:
 
 def run(config: Config) -> None:
     """Start the stdio MCP server. Called by `__main__.main`."""
-    logger.info(f'Car Deals MCP Server running on stdio (log level: {logger.level})')
+    logger.info(f'Agentic Used Car Search MCP Server running on stdio (log level: {logger.level})')
     if logger.level == 'info':
         logger.info(
             'Set CAR_DEALS_LOG_LEVEL=debug (or pass --verbose) for request '

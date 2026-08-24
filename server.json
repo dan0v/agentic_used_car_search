@@ -1,22 +1,22 @@
 {
     "$schema": "https://raw.githubusercontent.com/modelcontextprotocol/registry/main/schemas/server.json",
-    "name": "car-deals-mcp",
+    "name": "agentic-used-car-search",
     "description": "Search for car deals across US sources (Cars.com, Autotrader, KBB) and UK sources (Autotrader UK, Motors.co.uk, Cinch, eBay Motors) with CarFax filters (US), plus UK MOT history checks with outstanding-defect and safety-recall surfacing",
     "vendor": {
         "name": "dan0v",
         "url": "https://github.com/dan0v"
     },
-    "sourceUrl": "https://github.com/dan0v/car_deals_search_mcp",
+    "sourceUrl": "https://github.com/dan0v/agentic_used_car_search",
     "license": "MIT",
     "runtime": "python",
     "packages": {
         "uvx": {
-            "name": "car-deals-mcp",
+            "name": "agentic-used-car-search",
             "command": "uvx",
             "args": [
                 "--from",
-                "git+https://github.com/dan0v/car_deals_search_mcp",
-                "car-deals-mcp",
+                "git+https://github.com/dan0v/agentic_used_car_search",
+                "agentic-used-car-search",
                 "--country",
                 "US"
             ]

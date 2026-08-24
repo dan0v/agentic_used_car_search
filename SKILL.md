@@ -1,27 +1,27 @@
 ---
-name: car-deals
+name: agentic-used-car-search
 description: Search for used car listings across US and UK car marketplaces (Cars.com, Autotrader US/UK, KBB, Motors.co.uk, Cinch, eBay Motors), inspect full listing details, and check UK MOT vehicle history via CLI.
 ---
 
-# Car Deals Search Skill (Agent CLI & MCP)
+# Agentic Used Car Search Skill (Agent CLI & MCP)
 
 This project provides **first-class support for both AI Agent Skills (CLI) and MCP (Model Context Protocol)**. Use this skill in autonomous agent workflows (e.g. Odysseus, OpenCode, subagents) or scripts to search for used car deals across major US and UK automotive marketplaces, inspect detailed vehicle specifications and seller notes from listing URLs, and verify UK MOT histories and safety recalls.
 
 ## Dual Workflows
 
-- **Agent Skill / CLI**: Run `car-deals-mcp <search|detail|mot>` directly for instant terminal or subprocess execution with Markdown or structured `--json` output.
-- **MCP Server**: Run `car-deals-mcp serve` (or `car-deals-mcp --country <US|UK>`) over stdio for MCP protocol clients.
+- **Agent Skill / CLI**: Run `agentic-used-car-search <search|detail|mot>` directly for instant terminal or subprocess execution with Markdown or structured `--json` output.
+- **MCP Server**: Run `agentic-used-car-search serve` (or `agentic-used-car-search --country <US|UK>`) over stdio for MCP protocol clients.
 
 ## CLI Invocation
 
 Commands can be invoked directly or via `uv run` / `python -m`:
 
 ```bash
-car-deals-mcp <command> [options]
+agentic-used-car-search <command> [options]
 # or
-uv run car-deals-mcp <command> [options]
+uv run agentic-used-car-search <command> [options]
 # or
-python3 -m car_deals_mcp <command> [options]
+python3 -m agentic_used_car_search <command> [options]
 ```
 
 ---
@@ -33,7 +33,7 @@ python3 -m car_deals_mcp <command> [options]
 Search used car listings across multiple marketplaces with optional location and vehicle filters.
 
 ```bash
-car-deals-mcp search [OPTIONS]
+agentic-used-car-search search [OPTIONS]
 ```
 
 #### Options:
@@ -63,19 +63,19 @@ car-deals-mcp search [OPTIONS]
 
 ```bash
 # US search: 2020+ Toyota Camry under $25,000 near Los Angeles
-car-deals-mcp search --make Toyota --model Camry --year-min 2020 --price-max 25000 --zip 90210 --max-distance 50
+agentic-used-car-search search --make Toyota --model Camry --year-min 2020 --price-max 25000 --zip 90210 --max-distance 50
 
 # US search with CARFAX badges across all US sources
-car-deals-mcp search --make Honda --model Accord --one-owner --no-accidents --sources cars.com autotrader kbb
+agentic-used-car-search search --make Honda --model Accord --one-owner --no-accidents --sources cars.com autotrader kbb
 
 # UK search: Automatic BMW 3 Series under £20,000 near London
-car-deals-mcp search --country UK --make BMW --model "3 Series" --zip "SW1A 1AA" --price-max 20000 --transmission Automatic
+agentic-used-car-search search --country UK --make BMW --model "3 Series" --zip "SW1A 1AA" --price-max 20000 --transmission Automatic
 
 # UK search on Cinch (returns number plates for MOT checks)
-car-deals-mcp search --country UK --make Volkswagen --model Golf --sources cinch
+agentic-used-car-search search --country UK --make Volkswagen --model Golf --sources cinch
 
 # Structured JSON output
-car-deals-mcp search --make Ford --model F-150 --price-max 40000 --json
+agentic-used-car-search search --make Ford --model F-150 --price-max 40000 --json
 ```
 
 ---
@@ -85,7 +85,7 @@ car-deals-mcp search --make Ford --model F-150 --price-max 40000 --json
 Fetch and parse the full detail page for any single car listing URL (VIN, trim, engine, transmission, options, features, dealer history, seller notes).
 
 ```bash
-car-deals-mcp detail <URL> [OPTIONS]
+agentic-used-car-search detail <URL> [OPTIONS]
 ```
 
 #### Options:
@@ -99,13 +99,13 @@ car-deals-mcp detail <URL> [OPTIONS]
 
 ```bash
 # Fetch details for a Cars.com listing
-car-deals-mcp detail "https://www.cars.com/vehicledetail/12345678-abcd/"
+agentic-used-car-search detail "https://www.cars.com/vehicledetail/12345678-abcd/"
 
 # Fetch details from Autotrader UK with links
-car-deals-mcp detail --include-links "https://www.autotrader.co.uk/car-details/202401011234567"
+agentic-used-car-search detail --include-links "https://www.autotrader.co.uk/car-details/202401011234567"
 
 # JSON output
-car-deals-mcp detail --json "https://www.cinch.co.uk/used-cars/bmw/3-series/..."
+agentic-used-car-search detail --json "https://www.cinch.co.uk/used-cars/bmw/3-series/..."
 ```
 
 ---
@@ -115,7 +115,7 @@ car-deals-mcp detail --json "https://www.cinch.co.uk/used-cars/bmw/3-series/..."
 Check the official GOV.UK MOT history and active safety recalls for a UK-registered vehicle using its registration number plate.
 
 ```bash
-car-deals-mcp mot <REGISTRATION> [OPTIONS]
+agentic-used-car-search mot <REGISTRATION> [OPTIONS]
 ```
 
 #### Options:
@@ -126,10 +126,10 @@ car-deals-mcp mot <REGISTRATION> [OPTIONS]
 
 ```bash
 # Check MOT history and outstanding defects
-car-deals-mcp mot "YL08 NNV"
+agentic-used-car-search mot "YL08 NNV"
 
 # Check MOT with JSON output
-car-deals-mcp mot YL08NNV --json
+agentic-used-car-search mot YL08NNV --json
 ```
 
 ---
@@ -139,9 +139,9 @@ car-deals-mcp mot YL08NNV --json
 Start the stdio MCP server for MCP clients (Claude Desktop, Cursor, VS Code, etc.).
 
 ```bash
-car-deals-mcp serve [--country US|UK] [--cloakbrowser-key <key>]
+agentic-used-car-search serve [--country US|UK] [--cloakbrowser-key <key>]
 # or run directly with no subcommand
-car-deals-mcp --country UK
+agentic-used-car-search --country UK
 ```
 
 ---
@@ -149,11 +149,11 @@ car-deals-mcp --country UK
 ## Agent Workflow Recommendations
 
 1. **Finding Used Cars**:
-   - Start with `car-deals-mcp search --make <Make> --model <Model> [filters]`.
+   - Start with `agentic-used-car-search search --make <Make> --model <Model> [filters]`.
    - In the UK, search `cinch` or view `autotrader.co.uk` detail pages to obtain the vehicle's registration plate (`vrm` / `registration`).
 
 2. **Inspecting Vehicle History & Defects**:
-   - For UK vehicles, take the registration plate and run `car-deals-mcp mot <REGISTRATION>` to verify MOT expiry, past failures, mileage progression, and outstanding safety recalls.
+   - For UK vehicles, take the registration plate and run `agentic-used-car-search mot <REGISTRATION>` to verify MOT expiry, past failures, mileage progression, and outstanding safety recalls.
 
 3. **Evaluating Listing Specifics**:
-   - Run `car-deals-mcp detail "<URL>"` on candidate listings to inspect specific trim features, options, full vehicle history, and seller notes not included in summary cards.
+   - Run `agentic-used-car-search detail "<URL>"` on candidate listings to inspect specific trim features, options, full vehicle history, and seller notes not included in summary cards.

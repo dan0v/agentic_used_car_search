@@ -15,7 +15,7 @@ lint-fix:
 
 # Import-smoke every source module to catch syntax/import errors
 syntax:
-    uv run python -c "import car_deals_mcp.server, car_deals_mcp.scrapers, car_deals_mcp.logger"
+    uv run python -c "import agentic_used_car_search.server, agentic_used_car_search.scrapers, agentic_used_car_search.logger"
 
 # Full end-to-end MCP client test - hits Cars.com / Autotrader UK / GOV.UK for real, takes minutes
 test:
@@ -23,8 +23,8 @@ test:
 
 # Quick Cars.com smoke - print a few listings
 test-scraper:
-    uv run python -c "import asyncio; from car_deals_mcp.scrapers import scrape_carscom; \
-        from car_deals_mcp.types import SearchParams; \
+    uv run python -c "import asyncio; from agentic_used_car_search.scrapers import scrape_carscom; \
+        from agentic_used_car_search.types import SearchParams; \
         r = asyncio.run(scrape_carscom(SearchParams(make='Toyota', model='Camry'), 3)); \
         [print(l.format()) for l in r.listings]"
 
@@ -37,7 +37,7 @@ build:
 
 # Run the MCP server on stdio, as an MCP client would
 run:
-    uv run car-deals-mcp
+    uv run agentic-used-car-search
 
 # Delete build output and installed dependencies
 clean:

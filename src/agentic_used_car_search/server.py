@@ -38,6 +38,7 @@ from .scrapers import (
 from .types import (
     CarListing,
     Config,
+    DetailResult,
     ModelSuggestions,
     MotRecord,
     ProgressSender,
@@ -571,9 +572,7 @@ def format_mot_output(record: MotRecord) -> str:
             for item in items:
                 output += f'- {item}\n'
 
-        _section(
-            'Dangerous defects (do not drive until repaired)', issues.get('dangerous') or []
-        )
+        _section('Dangerous defects (do not drive until repaired)', issues.get('dangerous') or [])
         _section('Major defects (repair immediately)', issues.get('major') or [])
         _section('Minor defects (repair soon)', issues.get('minor') or [])
         _section('Advisories (monitor and repair if necessary)', issues.get('advisories') or [])
@@ -665,9 +664,7 @@ async def _handle_search(
                 is_error=True,
             )
 
-        output = format_search_output(
-            params, listings, suggestions, errors, skipped_filters, is_uk
-        )
+        output = format_search_output(params, listings, suggestions, errors, skipped_filters, is_uk)
         logger.trace(f'Response: {logger.preview(output)}')
         return _text_result(output)
     except Exception as error:  # noqa: BLE001

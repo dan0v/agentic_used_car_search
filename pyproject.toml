@@ -90,5 +90,5 @@ module = ["agentic_used_car_search.scrapers.*"]
 disable_error_code = ["arg-type", "attr-defined", "call-arg", "index", "no-any-return", "operator", "return-value", "union-attr"]
 
 [[tool.mypy.overrides]]
-module = ["agentic_used_car_search.server"]
+module = ["agentic_used_car_search.server", "agentic_used_car_search.cli"]
 disable_error_code = ["no-any-return", "arg-type", "call-arg", "attr-defined"]

@@ -41,7 +41,7 @@ agentic-used-car-search search [OPTIONS]
 - `--model <name>`: Car model (e.g. `Camry`, `3 Series`, `Mustang`, `Civic`).
 - `--country <US|UK>`: Search region (`US` default, or `UK`). Selects regional sources, currency, and default location code.
 - `--zip <code|postcode>`: Location code (`90210` for US, `SW1A 1AA` for UK).
-- `--max-distance <miles>`: Search radius in miles (`0` for nationwide).
+- `--max-distance <miles>`: Search radius in miles (e.g. `50` or `100`; `0` for nationwide).
 - `--year-min <year>`: Minimum vehicle model year (e.g. `2018`).
 - `--year-max <year>`: Maximum vehicle model year (e.g. `2024`).
 - `--price-max <amount>`: Maximum price (USD in US, GBP in UK).
@@ -62,20 +62,20 @@ agentic-used-car-search search [OPTIONS]
 #### Examples:
 
 ```bash
-# US search: 2020+ Toyota Camry under $25,000 near Los Angeles
+# US search: 2020+ Toyota Camry under $25,000 near Los Angeles (50 mi radius)
 agentic-used-car-search search --make Toyota --model Camry --year-min 2020 --price-max 25000 --zip 90210 --max-distance 50
 
-# US search with CARFAX badges across all US sources
-agentic-used-car-search search --make Honda --model Accord --one-owner --no-accidents --sources cars.com autotrader kbb
+# US search with CARFAX badges across all US sources (within 100 miles)
+agentic-used-car-search search --make Honda --model Accord --one-owner --no-accidents --max-distance 100 --sources cars.com autotrader kbb
 
-# UK search: Automatic BMW 3 Series under £20,000 near London
-agentic-used-car-search search --country UK --make BMW --model "3 Series" --zip "SW1A 1AA" --price-max 20000 --transmission Automatic
+# UK search: Automatic BMW 3 Series under £20,000 near London (50 mi radius)
+agentic-used-car-search search --country UK --make BMW --model "3 Series" --zip "SW1A 1AA" --max-distance 50 --price-max 20000 --transmission Automatic
 
 # UK search on Cinch (returns number plates for MOT checks)
-agentic-used-car-search search --country UK --make Volkswagen --model Golf --sources cinch
+agentic-used-car-search search --country UK --make Volkswagen --model Golf --max-distance 100 --sources cinch
 
 # Structured JSON output
-agentic-used-car-search search --make Ford --model F-150 --price-max 40000 --json
+agentic-used-car-search search --make Ford --model F-150 --price-max 40000 --max-distance 100 --json
 ```
 
 ---
@@ -120,6 +120,7 @@ agentic-used-car-search mot <REGISTRATION> [OPTIONS]
 
 #### Options:
 - `<REGISTRATION>`: UK number plate (e.g. `"YL08 NNV"` or `"YL08NNV"`, positional or `--registration <REG>`).
+- `--retry`: Retry once after 2s if response has 0 tests or is limited.
 - `--json`: Output results as structured JSON (including vehicle details, test history, dangerous/major/minor defects, and recall status).
 
 #### Examples:
@@ -128,8 +129,8 @@ agentic-used-car-search mot <REGISTRATION> [OPTIONS]
 # Check MOT history and outstanding defects
 agentic-used-car-search mot "YL08 NNV"
 
-# Check MOT with JSON output
-agentic-used-car-search mot YL08NNV --json
+# Check MOT with JSON output and retry
+agentic-used-car-search mot YL08NNV --retry --json
 ```
 
 ---

@@ -136,24 +136,23 @@ _EXTRACT_MOT_JS: Final[str] = r"""
         const inset = recallBlock.querySelector('.govuk-inset-text, p');
         if (inset) recalls.push(inset.innerText.trim().replace(/\s+/g, ' '));
     }
-    return { found: true, vehicle, tests, recalls };
+        // Check for data limited or rate limited warning banner
+        const dataLimitedEl = document.querySelector('.govuk-warning-text, [data-test-id*="limited"], [data-test-id*="warning"]');
+        const dataLimitedText = dataLimitedEl ? dataLimitedEl.innerText.trim() : null;
+        const pageText = document.body ? document.body.innerText : '';
+        const isDataLimited = /data\s+limited|rate\s+limit|too\s+many\s+requests/i.test(pageText);
+
+        return { found: true, vehicle, tests, recalls, dataLimited: isDataLimited, dataLimitedText };
+    }
 }
 """
 
 
-async def fetch_mot_history(
+async def _fetch_mot_history_once(
     registration: str,
     send_progress: ProgressSender | None = None,
     config: Config | None = None,
 ) -> MotRecord:
-    """Fetch a UK vehicle's MOT history from GOV.UK and return the structured
-    record: vehicle identity, MOT expiry, the full test history with per-test
-    defects categorised by severity, and any outstanding safety recalls.
-
-    The page is server-rendered with stable GOV.UK `data-test-id` attributes -
-    the service's own test hooks, far more stable than dealer markup. The recalls
-    block is server-rendered too, so one page load captures everything.
-    """
     reg = normalise_registration(registration)
     if not reg:
         raise ValueError('A vehicle registration is required to check MOT history')
@@ -250,3 +249,33 @@ async def fetch_mot_history(
         raise RuntimeError(f'MOT history check failed: {err}') from err
     finally:
         stop_heartbeat()
+
+
+async def fetch_mot_history(
+    registration: str,
+    send_progress: ProgressSender | None = None,
+    config: Config | None = None,
+    max_retries: int = 1,
+) -> MotRecord:
+    """Fetch a UK vehicle's MOT history from GOV.UK with automatic retry.
+
+    Returns the structured record: vehicle identity, MOT expiry, full test history
+    with per-test defects categorised by severity, and any outstanding safety recalls.
+    If the response returns zero tests or indicates limited data, retries up to
+    `max_retries` times with a 2-second backoff.
+    """
+    attempts = 0
+    while True:
+        record = await _fetch_mot_history_once(registration, send_progress, config)
+        attempts += 1
+        # If record found with tests or reached max attempts, return it
+        if not record.found or len(record.tests) > 0 or attempts > max_retries:
+            return record
+
+        logger.info(
+            f'MOT history returned 0 tests for registration "{registration}" on attempt {attempts}. '
+            'Retrying in 2s...'
+        )
+        if send_progress:
+            send_progress(f'MOT response incomplete, retrying attempt {attempts + 1} in 2s...')
+        await asyncio.sleep(2.0)

@@ -11,6 +11,7 @@ import asyncio
 import dataclasses
 import json
 import os
+import subprocess
 import sys
 from typing import Any
 
@@ -44,6 +45,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument('--verbose', '-v', action='store_true', help='Debug log level.')
     parser.add_argument('--trace', action='store_true', help='Trace log level (verbosest).')
+    parser.add_argument(
+        '--check-update',
+        action='store_true',
+        help='Check if the local repository is behind origin and optionally update.',
+    )
 
     subparsers = parser.add_subparsers(dest='command', help='Available subcommands')
 
@@ -199,6 +205,11 @@ def build_parser() -> argparse.ArgumentParser:
         help='CloakBrowser license key.',
     )
     p_mot.add_argument(
+        '--retry',
+        action='store_true',
+        help='Retry once after 2s if response has 0 tests or is limited.',
+    )
+    p_mot.add_argument(
         '--json',
         action='store_true',
         help='Output structured JSON instead of Markdown.',
@@ -284,7 +295,7 @@ async def _cli_search(args: argparse.Namespace, config: Config) -> int:
         output_data: dict[str, Any] = {
             'search': dataclasses.asdict(params),
             'total_listings': len(listings),
-            'listings': [dataclasses.asdict(l) for l in listings],
+            'listings': [dataclasses.asdict(listing) for listing in listings],
             'model_suggestions': [dataclasses.asdict(s) for s in suggestions]
             if suggestions
             else [],
@@ -293,11 +304,11 @@ async def _cli_search(args: argparse.Namespace, config: Config) -> int:
         }
         print(json.dumps(output_data, indent=2))
     else:
-        output = format_search_output(
-            params, listings, suggestions, errors, skipped_filters, is_uk
-        )
+        output = format_search_output(params, listings, suggestions, errors, skipped_filters, is_uk)
         print(output)
 
+    if not listings:
+        return 1
     return 0
 
 
@@ -341,12 +352,17 @@ async def _cli_mot(args: argparse.Namespace, config: Config) -> int:
         sys.stderr.write('Error: registration plate is required for mot command.\n')
         return 1
 
+    max_retries = 2 if getattr(args, 'retry', False) else 1
+
     try:
-        record = await fetch_mot_history(registration, None, config)
+        record = await fetch_mot_history(registration, None, config, max_retries=max_retries)
         if args.json:
             print(json.dumps(dataclasses.asdict(record), indent=2))
         else:
             print(format_mot_output(record))
+
+        if not record.found or len(record.tests) == 0:
+            return 1
         return 0
     except Exception as err:  # noqa: BLE001
         logger.error('mot command failed', err)
@@ -372,11 +388,49 @@ async def _dispatch_async(args: argparse.Namespace, config: Config) -> int:
         await close_client()
 
 
+def _check_update() -> None:
+    try:
+        fetch_res = subprocess.run(
+            ['git', 'fetch', 'origin', '--quiet'],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+        if fetch_res.returncode != 0:
+            sys.stderr.write(f'[Update Check] git fetch failed: {fetch_res.stderr.strip()}\n')
+            return
+
+        rev_res = subprocess.run(
+            ['git', 'rev-list', 'HEAD...origin/main', '--count'],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        if rev_res.returncode == 0:
+            count = int(rev_res.stdout.strip() or '0')
+            if count > 0:
+                sys.stderr.write(
+                    f'[Update Check] Local repository is behind origin/main by {count} commit(s).\n'
+                    'Run `git pull && uv sync` to update.\n'
+                )
+            else:
+                sys.stderr.write('[Update Check] Repository is up to date with origin/main.\n')
+        else:
+            sys.stderr.write('[Update Check] Unable to determine commit distance to origin/main.\n')
+    except Exception as exc:  # noqa: BLE001
+        sys.stderr.write(f'[Update Check] Warning: update check failed: {exc}\n')
+
+
 def run_cli(argv: list[str] | None = None) -> int:
     from .server import run as run_server
 
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    if getattr(args, 'check_update', False):
+        _check_update()
 
     sub_key = getattr(args, 'sub_cloakbrowser_key', None)
     cloak_key = sub_key or args.cloakbrowser_key or os.environ.get('CLOAKBROWSER_LICENSE_KEY')

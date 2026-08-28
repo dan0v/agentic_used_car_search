@@ -40,17 +40,17 @@ Choose the integration method that best suits your environment:
 Use this for agent frameworks (e.g. Odysseus, OpenCode), autonomous background tasks, or direct terminal usage.
 
 ```bash
-# 1. Search car deals (US or UK)
-uv run agentic-used-car-search search --make Toyota --model Camry --price-max 25000
-uv run agentic-used-car-search search --country UK --make BMW --model "3 Series" --transmission Automatic
+# 1. Search car deals (US or UK) with optional max distance radius
+uv run agentic-used-car-search search --make Toyota --model Camry --price-max 25000 --max-distance 50
+uv run agentic-used-car-search search --country UK --make BMW --model "3 Series" --transmission Automatic --max-distance 50
 
 # 2. Get full listing details as Markdown or JSON
 uv run agentic-used-car-search detail "https://www.cars.com/vehicledetail/..."
 uv run agentic-used-car-search detail --json "https://www.autotrader.co.uk/car-details/..."
 
-# 3. Check UK vehicle MOT history & safety recalls
+# 3. Check UK vehicle MOT history & safety recalls (with optional --retry and --json)
 uv run agentic-used-car-search mot "KU16 YSC"
-uv run agentic-used-car-search mot KU16YSC --json
+uv run agentic-used-car-search mot KU16YSC --retry --json
 ```
 
 See [SKILL.md](SKILL.md) (or `skills/agentic-used-car-search/SKILL.md`) for complete parameter specifications, JSON schemas, and agent prompting recipes.
